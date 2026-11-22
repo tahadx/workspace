@@ -104,7 +104,7 @@ export default class CommandBar extends View {
     });
   }
 
-  button(id, label, action) {
+  button(id, label, action, tip) {
     const t = theme();
     return div()
       .id(id)
@@ -117,6 +117,7 @@ export default class CommandBar extends View {
       .rounded(7)
       .text_color(t.muted)
       .hover((s) => s.bg(t.hover).text_color(t.foreground))
+      .when(tip, (el) => el.tooltip(tip))
       .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
       .on_click((_e, cx) => {
         cx.stop_propagation();
@@ -312,8 +313,8 @@ export default class CommandBar extends View {
               .gap(2)
               .items_center()
               .flex_none()
-              .child(this.button("cb-commands", svg("mods/workspace-chrome/layers.svg").size(14), () => run("app.palette")))
-              .child(this.button("cb-new", svg("mods/workspace-chrome/plus.svg").size(14), () => run("space.new")))
+              .child(this.button("cb-commands", svg("mods/command-bar/list.svg").size(14), () => run("app.palette"), "Command palette"))
+              .child(this.button("cb-new", svg("mods/workspace-chrome/plus.svg").size(14), () => run("space.new"), "New space"))
           )
       );
   }

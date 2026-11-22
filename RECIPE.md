@@ -55,7 +55,8 @@ a `blocked` chip when something needs you, a spinner with the working count, a
 `done` dot with its count, or a quiet "All clear" — then the three-segment
 sidebar control — full sidebar, compact rail, hidden — with the current state
 filled and a tooltip on each segment, so the hidden state is never a dead end;
-then a command-palette button and a new-space `+`. Every colour is read from
+then a command-palette button — three lines, the last one short, reading as the
+command list — and a new-space `+`, each with a tooltip. Every colour is read from
 `theme()`, so the bar follows the Omarchy theme and both appearances.
 
 **The work area**, `canvas` background, 10 px padding and 10 px gaps: the active
