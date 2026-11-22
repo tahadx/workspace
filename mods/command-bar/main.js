@@ -5,7 +5,7 @@
 
 import { View, div, svg } from "gpui-kit";
 import { h_flex } from "gpui-base";
-import { agents, spaces, theme, run, shared, setShared, layout, window } from "herdr";
+import { agents, spaces, theme, run, shared, setShared, layout, window, nextCommand } from "herdr";
 
 // The palette and the sidebar both resolve a place's stored colour through
 // this table (workspace-engine.js's MARK), not through theme().ansiN — keep
@@ -53,6 +53,15 @@ function setSidebarMode(mode) {
   run("layout.resize", { id: "sidebar", px: shared("sidebar.width") ?? 223 });
 }
 
+// One key walks the three states in the same order the segments read. The bar
+// owns it because it stays mounted while the sidebar is hidden, so the key can
+// always get back.
+const SIDEBAR_MODES = ["wide", "compact", "hidden"];
+function cycleSidebar() {
+  const next = SIDEBAR_MODES[(SIDEBAR_MODES.indexOf(sidebarMode()) + 1) % SIDEBAR_MODES.length];
+  setSidebarMode(next);
+}
+
 function keycap(t, label) {
   return div()
     .flex_none()
@@ -70,12 +79,30 @@ function keycap(t, label) {
 }
 
 export default class CommandBar extends View {
+  init(_props, cx) {
+    // Keys bound to `command-bar.<command>` arrive here even while the sidebar
+    // block is hidden, which `agents-list.*` commands do not.
+    cx.spawn(async (cx) => {
+      for (;;) {
+        try {
+          const c = await nextCommand();
+          if (c === "cycle_sidebar") {
+            cycleSidebar();
+            cx.notify();
+          }
+        } catch (e) {
+          console.log(`command-bar: command failed: ${e}`);
+        }
+      }
+    });
+  }
+
   button(id, label, action) {
     const t = theme();
     return div()
       .id(id)
       .h(26)
-      .px(9)
+      .px(7)
       .flex_none()
       .flex()
       .items_center()
@@ -266,7 +293,14 @@ export default class CommandBar extends View {
       )
 
       .child(div().h(16).w(1).flex_none().bg(t.border))
-      .child(this.button("cb-commands", svg("mods/workspace-chrome/layers.svg").size(14), () => run("app.palette")))
-      .child(this.button("cb-new", svg("mods/workspace-chrome/plus.svg").size(14), () => run("space.new")));
+      .child(
+        h_flex()
+          .id("cb-actions")
+          .gap(2)
+          .items_center()
+          .flex_none()
+          .child(this.button("cb-commands", svg("mods/workspace-chrome/layers.svg").size(14), () => run("app.palette")))
+          .child(this.button("cb-new", svg("mods/workspace-chrome/plus.svg").size(14), () => run("space.new")))
+      );
   }
 }

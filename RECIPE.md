@@ -21,8 +21,9 @@ window edge is its edge), not resizable by its edge — it collapses instead.
 
 - **`AGENTS`** (top, 2.15 weight, min 90 px): a 42 px header (8 px above the
   label, 6 below, a hairline under it) with a `9.5 px` semibold muted `AGENTS`
-  label, a count pill, and three 26 px buttons — sort (clock), search
-  (magnifier), collapse sidebar (panel icon). Under it, status groups: each header
+  label, a count pill, and one 26 px button — sort. Search and new space live
+  in the command bar; the sidebar carries no collapse control of its own.
+  Under it, status groups: each header
   is 27 px with 6 px above — a status dot, a `9.5 px` semibold label, a count
   pill and a hairline, with a chevron to fold the group. Rows are 30 px: a 20 px
   program tile, the agent's name at `12.5 px` (foreground when the row is focused), an
@@ -223,23 +224,22 @@ and offers to make one.
   space. The `+` makes a tab in the space. The tab chip says which tab a row
   belongs to when there is more than one; the status dot is the agent's.
 - Right-click a terminal row: Herdr's own pane menu, aimed at *that* pane. Right-
-  click anywhere in the sidebar (headers included): this setup's menu, with two
-  rows — *Move sidebar to the right/left* (`Ctrl+Shift+M`) and *Collapse sidebar*
-  (`Ctrl+Shift+B`) — each showing its key.
+  click anywhere in the sidebar (headers included): this setup's menu, with one
+  row — *Move sidebar to the right/left* (`Ctrl+Shift+M`). Sidebar visibility
+  belongs to the command bar, so the menu does not carry its own toggle.
 - Drag the footer: the window moves (the strip is the drag handle; its buttons
-  stop the press). `Ctrl+Shift+B` folds the sidebar into the rail, and again opens
-  it at the width it had; there is no hidden state and no floating tab.
+  stop the press). `Ctrl+Shift+B` walks the three sidebar states in the bar's
+  order — wide, compact rail, hidden — and works from every one of them.
 - Narrower than 160 px, the sidebar is a rail. The agents list becomes a column
-  of 26 px cells with tooltips, centred in the rail: an unfold chevron at the top,
-  the space's avatar and its state mark, and search, shortcuts and settings on the
-  window's bottom edge. The avatar is the space's first letter in its colour — the
+  of 26 px cells with tooltips, centred in the rail: the space's avatar and its
+  state mark, then shortcuts and settings on the window's bottom edge. The avatar is the space's first letter in its colour — the
   way the expanded rows draw it — so a place is recognisable without its name; the
   current space wears the accent ring. The state mark sits on the avatar's corner:
   a spinner while working, `!` when something needs you, a filled dot when done and
   a hollow ring when idle; a space where nothing has reported stays bare. Worktrees
   do not get a cell: they are checkouts under a repo, and the expanded tree and
   search still hold them. The first nine places get a cell; a tenth turns the rest
-  into one `…` that expands the sidebar. The terminals list and the footer draw
+  into one `…` that opens the search sheet. The terminals list and the footer draw
   nothing at this width, so the agents block puts them away while the rail is
   shown and gives them back when the sidebar widens — only the blocks it hid
   are put back, and the list is remembered, so a restart while collapsed

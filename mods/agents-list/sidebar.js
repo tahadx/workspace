@@ -1895,8 +1895,6 @@ export class Sidebar extends Workspace {
       .on_mouse_down("left", (_e, cx) => this.touch(cx))
       .on_mouse_down_out((_e, cx) => this.blur(cx))
       .on_mouse_down("right", (_e, cx) => { cx.stop_propagation(); openOverlay({ mod: "sidebar-menu", kind: "popup", width: 250 }); })
-      .child(this.iconButton(t, "rail-expand", "mods/workspace-chrome/chevron-right.svg", "Show sidebar", toggleSidebar, 13))
-      .child(div().w(16).h(1).my(3).bg(wash(t.foreground, "10")))
       // items_center here is what centres a cell in the 44 px rail: the cells
       // column is its own box, so the rail's own centring does not reach them.
       .child(v_flex().id(id).flex_1().min_h(0).gap(2).items_center().overflow_y_scrollbar()
@@ -1932,12 +1930,10 @@ export class Sidebar extends Workspace {
             .text_color(t.muted)
             .cursor_pointer()
             .hover((x) => x.bg(t.hover).text_color(t.foreground))
-            .tooltip(`${beyond} more ${beyond === 1 ? "space" : "spaces"} — show the sidebar`)
-            .on_click(toggleSidebar)
+            .tooltip(`${beyond} more ${beyond === 1 ? "space" : "spaces"} — Alt+F`)
+            .on_click(() => run("mod.open", { name: "agents-list" }))
             .child(div().text_size(12).child("…"))] : []),
         ]))
-      .child(this.iconButton(t, "rail-search", "mods/icons/search.svg", "Search \u00b7 Alt+F",
-        () => run("mod.open", { name: "agents-list" })))
       .child(this.iconButton(t, "rail-keys", "mods/icons/keyboard.svg", "Keyboard shortcuts",
         () => run("mod.open", { name: "shortcuts" })))
       .child(this.iconButton(t, "rail-settings", "mods/icons/settings.svg", "Settings",
@@ -2264,10 +2260,7 @@ export class Sidebar extends Workspace {
             .items_center()
             .child(div().flex_1().min_w(0).truncate().text_size(11.5).font_medium().text_color(this.kbPaint ? t.accent : t.dim).child("Agents"))
             .child(this.iconButton(t, "ag-sort", `mods/workspace-chrome/${sort.icon}.svg`, `Sort agents: ${sort.label}`,
-              () => openOverlay({ mod: "agents-list", kind: "popup", width: 230, height: 172, props: { sortMenu: true } }), 13, sort.id !== "priority"))
-            .child(this.iconButton(t, "ag-search", "mods/icons/search.svg", "Search \u00b7 Alt+F",
-              () => run("mod.open", { name: "agents-list" })))
-            .child(this.iconButton(t, "ag-hide", "mods/icons/sidebar.svg", "Collapse sidebar", toggleSidebar)),
+              () => openOverlay({ mod: "agents-list", kind: "popup", width: 230, height: 172, props: { sortMenu: true } }), 13, sort.id !== "priority")),
         ),
       )
       .when(list.length === 0 && !collapsed, (el) =>
@@ -3306,12 +3299,7 @@ export class Sidebar extends Workspace {
             .child(div().flex_1())
             .child(h_flex().flex_none().gap(2).items_center()
               .child(this.iconButton(t, "ag-sort", `mods/workspace-chrome/${sort.icon}.svg`, `Sort agents: ${sort.label}`,
-                () => openOverlay({ mod: "agents-list", kind: "popup", width: 230, height: 172, props: { sortMenu: true } }), 13, sort.id !== "priority"))
-              .child(this.iconButton(t, "ag-search", "mods/icons/search.svg", "Search \u00b7 Alt+F",
-                () => run("mod.open", { name: "agents-list" })))
-              .child(div().w(1).h(14).mx(1).flex_none().bg(wash(t.foreground, "10")))
-              .when(bySpaces, (el) => el.child(this.iconButton(t, "ag-new-space", "mods/workspace-chrome/plus.svg", "New space", () => this.newSpace())))
-              .child(this.iconButton(t, "ag-hide", "mods/icons/sidebar.svg", "Collapse sidebar", toggleSidebar))),
+                () => openOverlay({ mod: "agents-list", kind: "popup", width: 230, height: 172, props: { sortMenu: true } }), 13, sort.id !== "priority"))),
         ),
       )
       .when(list.length === 0 && !bySpaces && !collapsed, (el) =>

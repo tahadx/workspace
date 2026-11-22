@@ -97,7 +97,7 @@
     "ctrl-shift-w": "agents-list.close_tab",
     "ctrl-shift-m": "agents-list.flip_layout",
     "ctrl-shift-d": "agents-list.worktree_new",
-    "ctrl-shift-b": "agents-list.toggle_sidebar",
+    "ctrl-shift-b": "command-bar.cycle_sidebar",
     "alt-b": "agents-list.focus_sidebar",
     "alt-shift-n": "agents-list.new_space",
     "ctrl-shift-n": "agents-list.new_space",
