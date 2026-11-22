@@ -22,6 +22,14 @@ function folder(cwd) {
 }
 
 export default class GlassPane extends View {
+  init() {
+    // Herdr's `reveal: "hover"` keeps the header's container drawn once it has
+    // appeared, so the strip owns its own visibility: it draws only while the
+    // pointer is actually on this pane. The container stays (invisible) and
+    // keeps focus-follows-mouse alive.
+    this.hovered = false;
+  }
+
   me() {
     return panes().find((p) => p.pane === props()?.pane);
   }
@@ -46,7 +54,7 @@ export default class GlassPane extends View {
       .child(svg(`mods/pane/${name}.svg`).size(13));
   }
 
-  render() {
+  render(cx) {
     const t = theme();
     const p = this.me();
     // Mod panes have no terminal; leave them completely alone.
@@ -61,7 +69,11 @@ export default class GlassPane extends View {
     return div()
       .id(`glass-pane-${pane}`)
       .size_full()
-      .on_hover((hovered) => {
+      .on_hover((hovered, cx) => {
+        if (this.hovered !== hovered) {
+          this.hovered = hovered;
+          cx.notify();
+        }
         if (!hovered || p.focused || !window().active) return;
         run("pane.focus", { pane });
       })
@@ -97,6 +109,9 @@ export default class GlassPane extends View {
           .child(this.button(t, `gs-d-${pane}`, "split-down", "pane.split", { direction: "down", pane }))
           .child(this.button(t, `gs-z-${pane}`, p.zoomed ? "unzoom" : "zoom", "pane.zoom", { pane }))
           .child(this.button(t, `gs-x-${pane}`, "close", "pane.close", { pane }))
+          // Kept in the tree so the pointer always has something to hover; it
+          // simply goes invisible when the pointer is not on this pane.
+          .opacity(this.hovered ? 1 : 0)
       );
   }
 }

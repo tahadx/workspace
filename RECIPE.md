@@ -61,12 +61,14 @@ pane has the keyboard, so focus never shifts the terminal), `background` fill,
 8 px between panes, framed even when the tab has a
 single pane, with a soft shadow under the group and along the sidebar's edge.
 Terminal text sits 16 px from the top and 14 px from the side, at 1.15 line
-height. Every pane also carries a `glass-pane` header, 5000 px tall and
-revealed only on hover: a 30 px strip in `surface` with a hairline under it
-shows the program's tile, its name, its folder and its state, plus split,
-zoom and close buttons. The rest is transparent and runs `pane.focus`, so
-moving the pointer onto a terminal still focuses it. Both the bar and the
-strip use theme colours only.
+height. Every pane also carries a `glass-pane` header, 5000 px tall: a 30 px
+strip in `surface` with a hairline under it shows the program's tile, its
+name, its folder and its state, plus split, zoom and close buttons. The rest
+is transparent and runs `pane.focus`, so moving the pointer onto a terminal
+still focuses it. Herdr's hover reveal can leave its container drawn after
+the pointer leaves, so the strip keeps its place in the tree and goes fully
+transparent instead: it appears while the pointer is on the pane and vanishes
+when it leaves. Both the bar and the strip use theme colours only.
 
 **No floating tabs.** Narrow, the sidebar is the rail; `Ctrl+Shift+B` folds it
 there and unfolds it at the width it had. There is no hidden state to rescue.
