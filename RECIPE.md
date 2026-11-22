@@ -184,8 +184,12 @@ left so two quick presses do not aim at the same neighbour. `Esc` leaves, and
 those keys, so the sidebar says `shared("sidebar.kb")` while it holds the
 keyboard and answers with `shared("sidebar.move")`, polled only then. The
 sidebar owns the layout's keys (`Ctrl+J/K`, the flip, close pane/tab, a new
-worktree and `Ctrl+Shift+B`) because it stays mounted when the rail folds and
-the footer and the terminals list are put away.
+worktree) because it stays mounted when the rail folds and the footer and the
+terminals list are put away. `Ctrl+Shift+B` and `Alt+B` belong to the command
+bar instead: `Ctrl+Shift+B` walks the three sidebar states, and `Alt+B` always
+brings the list to the keyboard — a hidden sidebar opens, the rail widens to
+its last wide width, and the selection lands on the list. Pressing it again
+keeps the list focused; it never hands the keyboard away.
 The sheet lists all of these under "Sidebar · with its keyboard"; the
 sidebar itself draws no hint row. Adding or removing a space from the list keeps
 the keyboard there: the sidebar re-claims its focus handle as the app settles

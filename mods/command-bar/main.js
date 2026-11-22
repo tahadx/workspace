@@ -90,6 +90,13 @@ export default class CommandBar extends View {
             cycleSidebar();
             cx.notify();
           }
+          // Alt+B always asks for the list. Open a folded sidebar in this same
+          // turn so its copy can answer the token on the next frame, instead of
+          // waiting for its scan timer.
+          if (c === "focus_sidebar") {
+            if (!shared("sidebar.kb")) setSidebarMode("wide");
+            setShared("sidebar.focus", Date.now());
+          }
         } catch (e) {
           console.log(`command-bar: command failed: ${e}`);
         }
@@ -238,69 +245,77 @@ export default class CommandBar extends View {
 
       .child(div().flex_1())
 
-      // What needs you, in the theme's own status colours.
+      // Activity, its hairline and the actions read as one cluster: the line
+      // stays, the air around it does not.
       .child(
         h_flex()
-          .id("cb-activity")
-          .gap(9)
+          .id("cb-right")
+          .gap(6)
           .items_center()
           .flex_none()
-          .when(blocked > 0, (el) =>
-            el.child(
-              div()
-                .h(22)
-                .px(8)
-                .flex()
-                .items_center()
-                .gap(6)
-                .rounded(6)
-                .bg(t.blocked + "26")
-                .text_size(10.5)
-                .font_semibold()
-                .text_color(t.blocked)
-                .child(`!  ${blocked} need${blocked === 1 ? "s" : ""} you`)
-            ))
-          .when(working > 0, (el) =>
-            el.child(
-              h_flex()
-                .gap(5)
-                .items_center()
-                .text_size(11)
-                .text_color(t.working)
-                .child(svg("mods/workspace-chrome/spinner.svg").size(11).spin(900))
-                .child(String(working))
-            ))
-          .when(done > 0, (el) =>
-            el.child(
-              h_flex()
-                .gap(5)
-                .items_center()
-                .text_size(11)
-                .text_color(t.done)
-                .child(div().size(6).rounded_full().bg(t.done))
-                .child(String(done))
-            ))
-          .when(blocked === 0 && working === 0 && done === 0, (el) =>
-            el.child(
-              h_flex()
-                .gap(5)
-                .items_center()
-                .text_size(11)
-                .text_color(t.dim)
-                .child(svg("mods/workspace-chrome/circle-check.svg").size(12))
-                .child("All clear")
-            ))
-      )
-
-      .child(div().h(16).w(1).flex_none().bg(t.border))
-      .child(
-        h_flex()
-          .id("cb-actions")
-          .gap(2)
-          .items_center()
-          .flex_none()
-          .child(this.button("cb-commands", svg("mods/workspace-chrome/layers.svg").size(14), () => run("app.palette")))
-          .child(this.button("cb-new", svg("mods/workspace-chrome/plus.svg").size(14), () => run("space.new")))
+          // What needs you, in the theme's own status colours.
+          .child(
+            h_flex()
+              .id("cb-activity")
+              .gap(9)
+              .items_center()
+              .flex_none()
+              .when(blocked > 0, (el) =>
+                el.child(
+                  div()
+                    .h(22)
+                    .px(8)
+                    .flex()
+                    .items_center()
+                    .gap(6)
+                    .rounded(6)
+                    .bg(t.blocked + "26")
+                    .text_size(10.5)
+                    .font_semibold()
+                    .text_color(t.blocked)
+                    .child(`!  ${blocked} need${blocked === 1 ? "s" : ""} you`)
+                ))
+              .when(working > 0, (el) =>
+                el.child(
+                  h_flex()
+                    .gap(5)
+                    .items_center()
+                    .text_size(11)
+                    .text_color(t.working)
+                    .child(svg("mods/workspace-chrome/spinner.svg").size(11).spin(900))
+                    .child(String(working))
+                ))
+              .when(done > 0, (el) =>
+                el.child(
+                  h_flex()
+                    .gap(5)
+                    .items_center()
+                    .text_size(11)
+                    .text_color(t.done)
+                    .child(div().size(6).rounded_full().bg(t.done))
+                    .child(String(done))
+                ))
+              .when(blocked === 0 && working === 0 && done === 0, (el) =>
+                el.child(
+                  h_flex()
+                    .gap(5)
+                    .items_center()
+                    .text_size(11)
+                    .text_color(t.dim)
+                    .child(svg("mods/workspace-chrome/circle-check.svg").size(12))
+                    .child("All clear")
+                ))
+          )
+          .child(div().h(16).w(1).flex_none().bg(t.border))
+          .child(
+            h_flex()
+              .id("cb-actions")
+              .gap(2)
+              .items_center()
+              .flex_none()
+              .child(this.button("cb-commands", svg("mods/workspace-chrome/layers.svg").size(14), () => run("app.palette")))
+              .child(this.button("cb-new", svg("mods/workspace-chrome/plus.svg").size(14), () => run("space.new")))
+          )
       );
   }
 }

@@ -15,7 +15,7 @@
 // panel render, which is what the host's "mods re-render when their data
 // changes" promise means.
 import { View } from "gpui-kit";
-import { props, shared, setShared } from "herdr";
+import { props, shared, setShared, nextCommand } from "herdr";
 import { Sidebar } from "./sidebar.js";
 import { Palette } from "./palette.js";
 
@@ -30,6 +30,20 @@ export default class Workspace extends View {
     // The root's context, so the view's timers and tasks live as long as this
     // copy does and `cx.notify()` anywhere inside it redraws the panel.
     this.inner.init(p, cx);
+    // `<mod>.<command>` is delivered to the copy whose root is listening, so the
+    // loop lives here and forwards to the view's own command table. (Started on
+    // the inner Sidebar before, every `agents-list.*` key resolved as an unknown
+    // command while the copy was still showing.)
+    cx.spawn(async (cx) => {
+      for (;;) {
+        try {
+          const c = await nextCommand();
+          this.inner.command?.(c, cx);
+        } catch (e) {
+          console.log(`agents-list: command failed: ${e}`);
+        }
+      }
+    });
   }
 
   render(cx) {

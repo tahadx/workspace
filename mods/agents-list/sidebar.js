@@ -3,7 +3,7 @@
 
 import { div, image, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { agents, terminals, panes, focused, spaces, machines, run, exec, hc, theme, shared, setShared, setAgentOrder, openOverlay, closeOverlay, props, window, layout, watchFolder, notify, nextCommand } from "herdr";
+import { agents, terminals, panes, focused, spaces, machines, run, exec, hc, theme, shared, setShared, setAgentOrder, openOverlay, closeOverlay, props, window, layout, watchFolder, notify } from "herdr";
 import {
   Workspace, wash, place, norm, tidyPath, base, inWorktrees, isRemoving, removingList,
   pinnedList, pinnedRepo, isPinned, checkouts, dropGitCache, worktreeTree, spaceColor, RANK, MARK,
@@ -332,30 +332,44 @@ export class Sidebar extends Workspace {
     // focus where it was (the footer, a tab bar, the background): the press is
     // the person's answer, and nothing inside the panel happened.
     this.blurred = false;
-    // Until this moment a claim (in or out) is in flight: one press flips the
-    // last press's answer, not some half-applied focus.
+    // The terminal the sidebar took the keyboard from. The app's model still
+    // names the pane it thinks is focused, so `pane.focus {pane}` can no-op;
+    // the terminal-targeted path is what actually puts the keyboard back.
+    this.returnTerminal = null;
+    // Until this moment a claim is in flight: the look must not flicker while
+    // the window catches up with the focus the press just asked for.
     this.pendingUntil = 0;
-    // Keys that act on the sidebar: its focus, a space, and the worktree dialogs
-    // the space menu opens (keys.json points them here). The dialogs are the same
-    // ones the menu uses, so a key never lands somewhere right-click cannot.
-    cx.spawn(async (cx) => {
-      for (;;) {
-        try {
-          this.command(await nextCommand(), cx);
-        } catch (e) {
-          console.log(`agents-list: command failed: ${e}`);
-        }
-      }
-    });
+    // Keys that act on the sidebar — its focus, a space, and the worktree
+    // dialogs the space menu opens — arrive through the root view's loop in
+    // main.js and land in `command()` below. That loop is the one the host
+    // delivers `<mod>.<command>` to. The dialogs are the same ones the menu
+    // uses, so a key never lands somewhere right-click cannot.
     // A dialog opened from here hands the keyboard to the pane behind it when it
     // closes. Take it back: removing a worktree must leave the person in the
     // list, not in a terminal.
-    let overlayAt = shared("overlay.closed");
+    this.overlayAt = shared("overlay.closed");
+    // Alt+B is handled by the always-mounted command bar, which is the only
+    // copy left when the sidebar is hidden; it leaves a token here. The token
+    // lives on the instance, not in the timer's closure: a hot reload can leave
+    // an older timer running, and two passes would focus and then leave again.
+    this.focusAt = shared("sidebar.focus");
     cx.timer.every(200, (cx) => {
+      try {
       this.watchJob(cx);
+      // The rail and a hidden sidebar cannot hold the keyboard; when the
+      // sidebar is folded away by anything but a focus claim, hand it back.
+      // A claim in flight owns the moment: Alt+B may be opening the panel right
+      // now, and the layout has not answered yet.
+      const side = find(layout(), "sidebar");
+      if (this.kbd && Date.now() > this.pendingUntil && (!side || side.hidden || (side.size?.px ?? 0) < 160)) this.leave(cx);
+      const asked = shared("sidebar.focus");
+      if (asked !== this.focusAt) {
+        this.focusAt = asked;
+        this.focusSidebar(cx);
+      }
       const now = shared("overlay.closed");
-      if (now === overlayAt) return;
-      overlayAt = now;
+      if (now === this.overlayAt) return;
+      this.overlayAt = now;
       const at = shared("sidebar.dialog");
       // Stale flag: a dialog that never reported back must not steal a later one.
       if (!at || Date.now() - at > 60000) return;
@@ -367,6 +381,9 @@ export class Sidebar extends Workspace {
       if (!(this.entries ?? []).some((e) => e.key === this.sel)) this.sel = this.focusKey();
       this.reclaim(cx);
       cx.notify();
+      } catch (e) {
+        console.log(`agents-list timer: ${e}`);
+      }
     });
     this.folded = new Set();
     // Git, checkouts and the per-space record live on the shared picture
@@ -1096,7 +1113,7 @@ export class Sidebar extends Workspace {
     if (c === "flip_layout") return flipLayout();
     if (c === "close_pane" || c === "close_tab") return closeFocused(c);
     const space = this.spaceOf(this.entry());
-    if (c === "focus_sidebar") return this.toggleFocus(cx);
+    if (c === "focus_sidebar") return this.focusSidebar(cx);
     if (c === "toggle_sidebar") return toggleSidebar();
     // A space made with the keyboard in the list keeps the list: the new
     // terminal would take the keys.
@@ -1125,6 +1142,15 @@ export class Sidebar extends Workspace {
   // covers the turn in which focus was just claimed and the window has not
   // answered yet, and lets go as soon as the truth says the keyboard went
   // somewhere else.
+  // Publish keyboard mode even when this copy is hidden: a folded panel never
+  // renders, so the render's write cannot be the only one. The footer routes
+  // Ctrl+J/K by this flag and must not send them into a hidden list.
+  publishKb(on) {
+    if (this.publishedKb === on) return;
+    this.publishedKb = on;
+    setShared("sidebar.kb", on);
+  }
+
   kb() {
     // A press outside said the list is done, even where the app left the focus
     // on this element: the answer to a press must not wait for the window.
@@ -1164,6 +1190,7 @@ export class Sidebar extends Workspace {
     this.kbd = false;
     this.kbdSeen = false;
     this.pendingUntil = 0;
+    this.publishKb(false);
     this.stopReorder();
     cx?.notify?.();
   }
@@ -1179,6 +1206,7 @@ export class Sidebar extends Workspace {
     this.kbd = true;
     this.kbdSeen = false;
     this.pendingUntil = Date.now() + 1000;
+    this.publishKb(true);
     cx?.notify?.();
   }
 
@@ -1188,33 +1216,40 @@ export class Sidebar extends Workspace {
     return (this.entries ?? [])[0]?.key ?? null;
   }
 
-  toggleFocus(cx) {
-    // The press flips what the press before it asked for. The window's answer
-    // only breaks a tie once no claim is in flight (a click into a terminal).
-    const here = this.kbd && (Boolean(this.handle?.is_focused()) || Date.now() < this.pendingUntil);
-    if (here) return this.leave(cx);
+  // Alt+B brings the list to the keyboard: a hidden sidebar opens, the rail
+  // widens to the last wide width, and the selection lands on the list. When
+  // the list already holds the keyboard, the press gives it back to the pane.
+  focusSidebar(cx) {
+    const node = find(layout(), "sidebar");
+    if (!node) return;
+    // The same answer the panel paints from, not the raw handle: a claim can be
+    // a frame late, and a stale flag once made every press read as "here".
+    if (this.kb()) return this.leave(cx);
+    // Remember where the keyboard came from before taking it.
+    const was = focused()?.terminal;
+    if (was) this.returnTerminal = was;
+    const saved = shared("sidebar.width");
+    const wide = typeof saved === "number" && saved >= 160 ? saved : 223;
+    if (node.hidden) {
+      run("layout.show", { id: "sidebar" });
+      setShared("sidebar.collapsed", false);
+      run("layout.resize", { id: "sidebar", px: wide });
+    } else if ((node.size?.px ?? 0) < 160) {
+      setShared("sidebar.collapsed", false);
+      run("layout.resize", { id: "sidebar", px: wide });
+    }
     this.blurred = false;
-    // The rail has no list to move through: show the sidebar first.
-    const rail = narrow();
-    if (rail) toggleSidebar();
-    this.sel = this.focusKey();
+    if (!(this.entries ?? []).some((e) => e.key === this.sel)) this.sel = this.focusKey();
     this.kbd = true;
     this.kbdSeen = false;
     this.pendingUntil = Date.now() + 1000;
+    this.publishKb(true);
     this.handle?.focus();
     cx.notify();
-    // The element that tracked the handle a moment ago is replaced by the render
-    // above, so claim it once more on the element that is actually on screen.
-    // Harmless when the first claim already landed.
-    cx.timer.after(40, (cx) => {
-      if (!this.kbd) return;
-      this.handle?.focus();
-      cx.notify();
-    });
-    if (rail) cx.timer.after(150, (cx) => {
-      if (this.kb() && !this.entry()) { this.sel = this.focusKey(); this.scrollTop = 0; }
-      cx.notify();
-    });
+    // Opening and widening redraw the panel, so the element that tracked the
+    // handle a moment ago is replaced. Reclaim repeats the claim across those
+    // paints instead of betting on the first one.
+    this.reclaim(cx);
   }
 
   // The sidebar asked for the change, so it keeps the keyboard: making or closing
@@ -1222,19 +1257,31 @@ export class Sidebar extends Workspace {
   // the middle of using it. Claims are spread over the moment the app settles.
   reclaim(cx) {
     this.blurred = false;
+    this.publishKb(true);
     this.handle?.focus();
-    for (const ms of [40, 140, 340, 700]) cx.timer.after(ms, () => { this.handle?.focus(); cx.notify(); });
+    for (const ms of [40, 140, 340, 700]) {
+      cx.timer.after(ms, (cx) => {
+        if (!this.kbd || this.blurred) return;
+        this.handle?.focus();
+        cx.notify();
+      });
+    }
   }
 
   // Back to the terminal the window shows, without changing which pane that is.
   leave(cx) {
+    this.blurred = true;
     this.kbd = false;
     this.kbdSeen = false;
-    this.pendingUntil = Date.now() + 1000;
-    // Hand the app's focus back to the pane the window shows. The style is
-    // already off above, so the look never waits for the keyboard to catch up.
-    const pane = focused()?.pane;
-    if (pane) run("pane.focus", { pane });
+    this.pendingUntil = 0;
+    this.publishKb(false);
+    // Hand the app's focus back to the terminal the sidebar took it from. The
+    // terminal-targeted focus is the one that moves the window's keyboard, not
+    // just its idea of the focused pane; `focused()` still names that terminal
+    // while this block holds the keyboard, so it is the fallback.
+    const terminal = this.returnTerminal ?? focused()?.terminal;
+    if (terminal) run("pane.focus", { terminal });
+    else if (focused()?.pane) run("pane.focus", { pane: focused().pane });
     cx.notify();
   }
 
@@ -1883,7 +1930,7 @@ export class Sidebar extends Workspace {
   // in the spaces view, agents elsewhere — then search, shortcuts and settings.
   rail(t, cells, id, limit = null) {
     const { shown, beyond } = railShown(cells, limit);
-    return v_flex().size_full().min_h(0).bg(t.chrome).items_center().pt(12).gap(2)
+    return v_flex().id("sidebar-surface").size_full().min_h(0).bg(t.chrome).items_center().pt(12).gap(2)
       .border(1)
       .border_color(this.kbPaint ? wash(t.accent, "7a") : t.chrome)
       .when(this.kbPaint, (el) => el.bg(wash(t.accent, "08")))
@@ -2231,6 +2278,7 @@ export class Sidebar extends Workspace {
     }
 
     return v_flex()
+      .id("sidebar-surface")
       .size_full()
       .min_h(0)
       .bg(t.chrome)
@@ -2277,6 +2325,14 @@ export class Sidebar extends Workspace {
     const t = theme();
     if (props()?.sortMenu) return this.sortMenu(t);
     if (props()?.menu) return this.menuView(t, cx);
+    // Alt+B leaves a token in the command bar. A copy on screen answers it on
+    // this change instead of waiting for the 200 ms scan; the timer stays as the
+    // fallback for a hidden copy, which does not render.
+    const asked = shared("sidebar.focus");
+    if (asked !== this.focusAt) {
+      this.focusAt = asked;
+      cx.timer.after(1, (cx) => this.focusSidebar(cx));
+    }
     // The sheet asks this copy to scan. Keep the context it will spawn on.
     this.scanCx = cx;
     // Read the focus answer once per render, so every style below agrees.
@@ -3267,6 +3323,7 @@ export class Sidebar extends Workspace {
     }
 
     return v_flex()
+      .id("sidebar-surface")
       .size_full()
       .min_h(0)
       .bg(t.chrome)
