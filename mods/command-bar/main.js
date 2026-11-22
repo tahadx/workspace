@@ -172,25 +172,6 @@ export default class CommandBar extends View {
       .border_color(t.border)
       .text_size(12)
 
-      // Sidebar: wide, compact rail, or gone. Visible in every state, so the
-      // hidden one is never a dead end.
-      .child(
-        h_flex()
-          .id("cb-sidebar-modes")
-          .h(27)
-          .p(2)
-          .gap(1)
-          .flex_none()
-          .items_center()
-          .rounded(8)
-          .bg(t.surface)
-          .border(1)
-          .border_color(t.border)
-          .child(this.modeSegment(t, "wide", "sidebar-wide", "Full sidebar", mode === "wide"))
-          .child(this.modeSegment(t, "compact", "sidebar-rail", "Compact rail", mode === "compact"))
-          .child(this.modeSegment(t, "hidden", "sidebar-off", "Hidden", mode === "hidden"))
-      )
-
       // Where you are.
       .child(
         h_flex()
@@ -307,6 +288,24 @@ export default class CommandBar extends View {
                 ))
           )
           .child(div().h(16).w(1).flex_none().bg(t.border))
+          // Sidebar: wide, compact rail, or gone. A view control, so it sits
+          // with the other chrome actions instead of opening the bar.
+          .child(
+            h_flex()
+              .id("cb-sidebar-modes")
+              .h(27)
+              .p(2)
+              .gap(1)
+              .flex_none()
+              .items_center()
+              .rounded(8)
+              .bg(t.surface)
+              .border(1)
+              .border_color(t.border)
+              .child(this.modeSegment(t, "wide", "sidebar-wide", "Full sidebar", mode === "wide"))
+              .child(this.modeSegment(t, "compact", "sidebar-rail", "Compact rail", mode === "compact"))
+              .child(this.modeSegment(t, "hidden", "sidebar-off", "Hidden", mode === "hidden"))
+          )
           .child(
             h_flex()
               .id("cb-actions")

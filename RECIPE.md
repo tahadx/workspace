@@ -47,17 +47,16 @@ window edge is its edge), not resizable by its edge — it collapses instead.
   height (`reveal`).
 
 **The command bar**, 40 px, `chrome` background with a hairline under it,
-drags the window. Left: a three-segment sidebar control — full sidebar, compact
-rail, hidden — with the current state filled and a tooltip on each segment, so
-the hidden state is never a dead end. Next, the current space's own avatar tile
-(its initial in the colour the sidebar gives that place), the space's name,
-then a search
-pill containing a magnifier, "Search spaces, agents, worktrees" and an `alt F`
+drags the window. Left: the current space's own avatar tile (its initial in the
+colour the sidebar gives that place), the space's name, then a search pill
+containing a magnifier, "Search spaces, agents, worktrees" and an `alt F`
 keycap; clicking it opens the same search sheet. Right: live agent activity —
 a `blocked` chip when something needs you, a spinner with the working count, a
-`done` dot with its count, or a quiet "All clear" — then a command-palette
-button and a new-space `+`. Every colour is read from `theme()`, so the bar
-follows the Omarchy theme and both appearances.
+`done` dot with its count, or a quiet "All clear" — then the three-segment
+sidebar control — full sidebar, compact rail, hidden — with the current state
+filled and a tooltip on each segment, so the hidden state is never a dead end;
+then a command-palette button and a new-space `+`. Every colour is read from
+`theme()`, so the bar follows the Omarchy theme and both appearances.
 
 **The work area**, `canvas` background, 10 px padding and 10 px gaps: the active
 tab as cards — 12 px radius, 1 px `border` (the same 1 px in `accent` while the
