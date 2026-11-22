@@ -94,6 +94,14 @@ export class Palette extends Workspace {
     });
   }
 
+  // Ctrl+J/K are the app's keys, so the sheet's own on_key_down never sees them;
+  // the root loop forwards the command here. Walk the same list the arrows do.
+  command(c, cx) {
+    if (c !== "dir_down" && c !== "dir_up") return false;
+    this.walk(c === "dir_down" ? 1 : -1, cx);
+    return true;
+  }
+
   // A read after an explicit change (a checkout made or removed here): the
   // sidebar's scanner does the work and writes the shared picture back. This is
   // never called on open, typing, or a status tick.

@@ -1106,7 +1106,8 @@ export class Sidebar extends Workspace {
   command(c, cx) {
     if (c === "dir_down" || c === "dir_up") {
       const direction = c === "dir_down" ? "down" : "up";
-      if (shared("search.open")) return setShared("search.move", `${direction}:${++this.moves}`);
+      // The find sheet moves itself now; this copy must not also step.
+      if (shared("search.open")) return;
       if (shared("sidebar.kb")) return setShared("sidebar.move", `${direction}:${++this.moves}`);
       return run("pane.go", { direction });
     }
