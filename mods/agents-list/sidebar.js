@@ -86,7 +86,16 @@ const sidebarDialog = (overlay) => {
 
 // To the rail (on macOS wide enough for the traffic lights), or back to the width it had.
 function toggleSidebar() {
-  const width = find(layout(), "sidebar")?.size?.px;
+  const sidebar = find(layout(), "sidebar");
+  // The command bar can hide the sidebar completely; Ctrl+Shift+B is also the
+  // way back from there, at the width it last had when wide.
+  if (sidebar?.hidden) {
+    setShared("sidebar.collapsed", false);
+    run("layout.show", { id: "sidebar" });
+    run("layout.resize", { id: "sidebar", px: shared("sidebar.width") ?? 223 });
+    return;
+  }
+  const width = sidebar?.size?.px;
   const collapsing = !narrow();
   if (collapsing) setShared("sidebar.width", width);
   // Mods edited before the rail went by width still read the flag.
@@ -173,8 +182,11 @@ function railBlockIds(node) {
 // the old one until the host applies the resize. The stored list is what a
 // restart (or a second fit) uses to put back only the blocks this hid.
 function fitRailTo(width, node) {
+  // A fully hidden sidebar keeps its rail bookkeeping untouched: the next time
+  // it is shown, the same blocks step aside (compact) or come back (wide).
+  if (node?.hidden) return false;
   const hid = storedArray("rail.hid");
-  if (width < 160 && node && !node.hidden) {
+  if (width < 160 && node) {
     if (hid.length) return false;
     const ids = railBlockIds(node);
     if (!ids.length) return false;

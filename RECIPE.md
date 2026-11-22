@@ -46,8 +46,11 @@ window edge is its edge), not resizable by its edge — it collapses instead.
   height (`reveal`).
 
 **The command bar**, 40 px, `chrome` background with a hairline under it,
-drags the window. Left: the current space's own avatar tile (its initial in the
-colour the sidebar gives that place), the space's name, then a search
+drags the window. Left: a three-segment sidebar control — full sidebar, compact
+rail, hidden — with the current state filled and a tooltip on each segment, so
+the hidden state is never a dead end. Next, the current space's own avatar tile
+(its initial in the colour the sidebar gives that place), the space's name,
+then a search
 pill containing a magnifier, "Search spaces, agents, worktrees" and an `alt F`
 keycap; clicking it opens the same search sheet. Right: live agent activity —
 a `blocked` chip when something needs you, a spinner with the working count, a
@@ -70,8 +73,11 @@ the pointer leaves, so the strip keeps its place in the tree and goes fully
 transparent instead: it appears while the pointer is on the pane and vanishes
 when it leaves. Both the bar and the strip use theme colours only.
 
-**No floating tabs.** Narrow, the sidebar is the rail; `Ctrl+Shift+B` folds it
-there and unfolds it at the width it had. There is no hidden state to rescue.
+**No floating tabs.** The sidebar has three states, chosen from the bar or with
+`Ctrl+Shift+B`: wide, the 44 px rail, and fully hidden. A hidden sidebar gives
+the terminal the whole window; the bar still carries the space, the search and
+the agent counts, and its control brings the sidebar back at the width it last
+had when wide. `Ctrl+Shift+B` is also a way back from hidden.
 
 The whole window has no title bar; on macOS the traffic lights sit at (12, 16).
 

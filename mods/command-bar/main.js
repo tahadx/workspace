@@ -5,13 +5,53 @@
 
 import { View, div, svg } from "gpui-kit";
 import { h_flex } from "gpui-base";
-import { agents, spaces, theme, run, shared } from "herdr";
+import { agents, spaces, theme, run, shared, setShared, layout, window } from "herdr";
 
 // The palette and the sidebar both resolve a place's stored colour through
 // this table (workspace-engine.js's MARK), not through theme().ansiN — keep
 // the exact same tile in the bar.
 const MARK = { ansi6: "#22a99a", ansi3: "#e3814f", ansi4: "#5b8def", ansi5: "#8b7cf6", ansi2: "#3fae6a", ansi1: "#d9649a" };
 const FALLBACK = "ansi6";
+
+function find(node, id) {
+  if (node?.id === id) return node;
+  for (const child of node?.children ?? []) {
+    const found = find(child, id);
+    if (found) return found;
+  }
+  return null;
+}
+
+// The three sidebar states, read from the live layout: hidden wins, then the
+// width decides wide/compact exactly the way the sidebar mod folds to its rail.
+function sidebarMode() {
+  const node = find(layout(), "sidebar");
+  if (!node || node.hidden) return "hidden";
+  const px = node.size?.px ?? 0;
+  return px > 0 && px < 160 ? "compact" : "wide";
+}
+
+// One source of truth for the top-bar control. Wide always returns at the last
+// wide width, so hiding from the rail never strands the sidebar at 44px.
+function setSidebarMode(mode) {
+  const node = find(layout(), "sidebar");
+  if (!node) return;
+  const now = sidebarMode();
+  if (now === mode) return;
+  if (now === "wide") setShared("sidebar.width", node.size?.px ?? 223);
+  if (mode === "hidden") {
+    run("layout.hide", { id: "sidebar" });
+    return;
+  }
+  if (node.hidden) run("layout.show", { id: "sidebar" });
+  if (mode === "compact") {
+    setShared("sidebar.collapsed", true);
+    run("layout.resize", { id: "sidebar", px: window()?.platform === "macos" ? 76 : 44 });
+    return;
+  }
+  setShared("sidebar.collapsed", false);
+  run("layout.resize", { id: "sidebar", px: shared("sidebar.width") ?? 223 });
+}
 
 function keycap(t, label) {
   return div()
@@ -51,8 +91,30 @@ export default class CommandBar extends View {
       .child(label);
   }
 
+  modeSegment(t, mode, icon, label, active) {
+    return div()
+      .id(`sb-${mode}`)
+      .size(22)
+      .flex_none()
+      .flex()
+      .items_center()
+      .justify_center()
+      .rounded(5)
+      .bg(active ? t.selected : t.surface)
+      .text_color(active ? t.foreground : t.dim)
+      .hover((s) => s.bg(active ? t.selected : t.hover).text_color(t.foreground))
+      .tooltip(active ? `${label} · current` : `Sidebar: ${label}`)
+      .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
+      .on_click((_e, cx) => {
+        cx.stop_propagation();
+        setSidebarMode(mode);
+      })
+      .child(svg(`mods/command-bar/${icon}.svg`).size(13));
+  }
+
   render() {
     const t = theme();
+    const mode = sidebarMode();
     const here = spaces().find((s) => s.active);
     // The sidebar keeps each place's avatar colour by space id; use the same one
     // so the bar's tile is the space's icon, not the app's.
@@ -75,6 +137,25 @@ export default class CommandBar extends View {
       .border_b(1)
       .border_color(t.border)
       .text_size(12)
+
+      // Sidebar: wide, compact rail, or gone. Visible in every state, so the
+      // hidden one is never a dead end.
+      .child(
+        h_flex()
+          .id("cb-sidebar-modes")
+          .h(27)
+          .p(2)
+          .gap(1)
+          .flex_none()
+          .items_center()
+          .rounded(8)
+          .bg(t.surface)
+          .border(1)
+          .border_color(t.border)
+          .child(this.modeSegment(t, "wide", "sidebar-wide", "Full sidebar", mode === "wide"))
+          .child(this.modeSegment(t, "compact", "sidebar-rail", "Compact rail", mode === "compact"))
+          .child(this.modeSegment(t, "hidden", "sidebar-off", "Hidden", mode === "hidden"))
+      )
 
       // Where you are.
       .child(
