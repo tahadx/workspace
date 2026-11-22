@@ -1,6 +1,8 @@
 # Workspace
 
-A Herdr window with no tab bar, driven entirely from the keyboard. Alt+F is the
+A Herdr window with no tab bar, driven entirely from the keyboard. A slim
+command bar carries where you are, one way to find anything and what your
+agents need, and each pane reveals a quiet header on hover. Alt+F is the
 search sheet: pinned places, spaces, worktrees and agents in one tree, matched
 on name, branch, folder, title or state, and acting there — switch, pin,
 rename, reorder, close, new space, new worktree. Ctrl+P pins a place: it keeps
@@ -43,13 +45,28 @@ window edge is its edge), not resizable by its edge — it collapses instead.
   thumb is the mod's. Reaching a row from the keyboard sums each row's measured
   height (`reveal`).
 
-**The work area**, `canvas` background, 8 px padding and 8 px gaps: the active
-tab as cards — 10 px radius, 1 px `border` (1 px `accent` while the pane has the
-keyboard), `background` fill, 8 px between panes, framed even when the tab has a
-single pane. Terminal text sits 14 px from the top and 12 px from the side.
-Every pane also carries an invisible `hoverfocus` header, 5000 px tall and
-revealed only on hover; it draws nothing and runs `pane.focus`, so moving the
-pointer onto a terminal focuses it.
+**The command bar**, 40 px, `chrome` background with a hairline under it,
+drags the window. Left: the current space's own avatar tile (its initial in the
+colour the sidebar gives that place), the space's name, then a search
+pill containing a magnifier, "Search spaces, agents, worktrees" and an `alt F`
+keycap; clicking it opens the same search sheet. Right: live agent activity —
+a `blocked` chip when something needs you, a spinner with the working count, a
+`done` dot with its count, or a quiet "All clear" — then a command-palette
+button and a new-space `+`. Every colour is read from `theme()`, so the bar
+follows the Omarchy theme and both appearances.
+
+**The work area**, `canvas` background, 10 px padding and 10 px gaps: the active
+tab as cards — 12 px radius, 1 px `border` (the same 1 px in `accent` while the
+pane has the keyboard, so focus never shifts the terminal), `background` fill,
+8 px between panes, framed even when the tab has a
+single pane, with a soft shadow under the group and along the sidebar's edge.
+Terminal text sits 16 px from the top and 14 px from the side, at 1.15 line
+height. Every pane also carries a `glass-pane` header, 5000 px tall and
+revealed only on hover: a 30 px strip in `surface` with a hairline under it
+shows the program's tile, its name, its folder and its state, plus split,
+zoom and close buttons. The rest is transparent and runs `pane.focus`, so
+moving the pointer onto a terminal still focuses it. Both the bar and the
+strip use theme colours only.
 
 **No floating tabs.** Narrow, the sidebar is the rail; `Ctrl+Shift+B` folds it
 there and unfolds it at the width it had. There is no hidden state to rescue.
