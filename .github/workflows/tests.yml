@@ -7,22 +7,47 @@ on:
   push:
   pull_request:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   tests:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
-          node-version: "20"
+          node-version: "24"
       - name: mod tests
+        shell: bash
         run: |
-          set -euo pipefail
+          # Run every file, not just the first failure, and print the failing
+          # file's own output. Redirecting it away made the old red runs read
+          # "tests/worktree.test.mjs" and then only an exit code.
+          set -uo pipefail
+          failed=()
           for test in tests/*.test.mjs; do
-            printf '%-28s ' "$test"
-            node "$test" >/tmp/test.out && tail -1 /tmp/test.out
+            printf '\n== %s ==\n' "$test"
+            if node "$test"; then
+              printf 'PASS %s\n' "$test"
+            else
+              printf 'FAIL %s\n' "$test"
+              failed+=("$test")
+            fi
           done
+          if (( ${#failed[@]} )); then
+            printf '\nFailed %d test(s):\n' "${#failed[@]}"
+            printf ' - %s\n' "${failed[@]}"
+            exit 1
+          fi
+          printf '\nAll %d test files passed.\n' "$(find tests -maxdepth 1 -name '*.test.mjs' | wc -l)"
       - name: install into a scratch Herdr home
+        shell: bash
         run: |
           mkdir -p /tmp/herdr-home
           HERDR_APP_HOME=/tmp/herdr-home ./install.sh
