@@ -324,6 +324,11 @@ export class Sidebar extends Workspace {
     // The shared walk counter: the app's Ctrl+J/K binding bypasses a focused
     // panel, so the sidebar writes the step and its own watcher reads it back.
     this.moves = 0;
+    // Commands relayed by the always-mounted command bar: the host delivers a
+    // mod's commands to shown copies only, so a hidden sidebar would otherwise
+    // lose every key bound to it. Start at the current token so a command sent
+    // before this copy existed is not replayed here.
+    this.cmdSeen = shared("agents.command")?.n ?? 0;
     // Focus is claimed a moment before the window answers `is_focused()`, so the
     // style follows this flag: set the instant Alt+B lands, never a frame late.
     this.kbd = false;
@@ -356,6 +361,7 @@ export class Sidebar extends Workspace {
     cx.timer.every(200, (cx) => {
       try {
       this.watchJob(cx);
+      this.watchCommands(cx);
       // The rail and a hidden sidebar cannot hold the keyboard; when the
       // sidebar is folded away by anything but a focus claim, hand it back.
       // A claim in flight owns the moment: Alt+B may be opening the panel right
@@ -1030,6 +1036,20 @@ export class Sidebar extends Workspace {
         this.jobBusy = false;
       }
     });
+  }
+
+  // A command relayed by the always-mounted command bar. The host sends a
+  // mod's commands to shown copies only, so the layout binds the sidebar's keys
+  // to the bar while it is hidden; this timer runs in a hidden copy too and
+  // takes the command here, where the same `command()` table already lives.
+  watchCommands(cx) {
+    const req = shared("agents.command");
+    if (!req || req.n === this.cmdSeen) return;
+    this.cmdSeen = req.n;
+    // Ack before running: the bar's fallback must not add a second space while
+    // this panel is already making one.
+    setShared("agents.command.ack", { n: req.n, at: Date.now() });
+    this.command(req.c, cx);
   }
 
   async runWorktreeJob(job, cx) {

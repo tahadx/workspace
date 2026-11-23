@@ -5,7 +5,7 @@
 
 import { View, div, svg } from "gpui-kit";
 import { h_flex } from "gpui-base";
-import { agents, spaces, theme, run, shared, setShared, layout, window, nextCommand } from "herdr";
+import { agents, spaces, panes, focused, theme, run, shared, setShared, layout, window, nextCommand } from "herdr";
 
 // The palette and the sidebar both resolve a place's stored colour through
 // this table (workspace-engine.js's MARK), not through theme().ansiN — keep
@@ -62,6 +62,60 @@ function cycleSidebar() {
   setSidebarMode(next);
 }
 
+// Keys that belong to the sidebar but must keep working while its block is
+// hidden. Herdr delivers `<mod>.<command>` to shown copies only, and this bar
+// is the copy that stays mounted, so the layout binds these to `command-bar.*`
+// and the sidebar takes them from the shared relay on its timer. The frequent
+// walk stays here, so a held Ctrl+J/K does not wait for that timer.
+const RELAYED = new Set(["new_space", "worktree_new", "worktree_open", "worktree_remove", "close_space"]);
+
+let steps = 0;
+
+function walk(direction) {
+  const token = `${direction}:${++steps}`;
+  if (shared("search.open")) return setShared("search.move", token);
+  if (shared("sidebar.kb")) return setShared("sidebar.move", token);
+  run("pane.go", { direction });
+}
+
+// The sidebar's close rule: the last tab of a space is replaced by a fresh
+// shell in the same space, so closing never jumps to another space's terminal.
+function closeFocused(name) {
+  const f = focused();
+  const tabId = f?.tab;
+  if (!tabId) return;
+  const space = spaces().find((s) => s.tabs.some((t) => t.id === tabId));
+  if (!space) return;
+  if (name === "close_pane" && f.pane && panes().filter((p) => p.tab === tabId).length > 1) return run("pane.close", { pane: f.pane });
+  if (space.tabs.length > 1) return run("tab.close", { id: tabId });
+  run("tab.new", { space: space.id });
+  run("tab.close", { id: tabId });
+}
+
+// The sidebar's layout flip, with the same remembered panel width.
+function flipLayout() {
+  const tree = JSON.parse(JSON.stringify(layout() ?? {}));
+  if (!Array.isArray(tree.children) || tree.children.length < 2) return;
+  tree.children.reverse();
+  const body = find(tree, "work-body");
+  if (body?.type === "row" && Array.isArray(body.children) && body.children.length > 1) body.children.reverse();
+  const panel = find(tree, "panel");
+  if (panel) {
+    if (!panel.hidden && (panel.size?.px ?? 0) >= (panel.min ?? 0)) setShared("panel.width", panel.size.px);
+    else if ((panel.size?.px ?? 0) < (panel.min ?? 0)) panel.size.px = shared("panel.width") ?? 368;
+  }
+  run("layout.set", { layout: tree });
+}
+
+// Leave a command for the sidebar copy. A panel that has never been shown has
+// no copy to take it, so only new_space gets an app fallback when the relay is
+// not acknowledged.
+function relay(command) {
+  const n = (shared("agents.command")?.n ?? 0) + 1;
+  setShared("agents.command", { c: command, n, at: Date.now() });
+  return n;
+}
+
 function keycap(t, label) {
   return div()
     .flex_none()
@@ -96,6 +150,20 @@ export default class CommandBar extends View {
           if (c === "focus_sidebar") {
             if (!shared("sidebar.kb")) setSidebarMode("wide");
             setShared("sidebar.focus", Date.now());
+          }
+          if (c === "dir_down" || c === "dir_up") walk(c === "dir_down" ? "down" : "up");
+          else if (c === "close_pane" || c === "close_tab") closeFocused(c);
+          else if (c === "flip_layout") flipLayout();
+          else if (RELAYED.has(c)) {
+            const n = relay(c);
+            if (c === "new_space") {
+              // No sidebar copy yet (it has never been shown this launch): the
+              // app command still makes the space instead of losing the key.
+              // One second leaves the panel's 200 ms timer room to ack first.
+              cx.timer.after(1000, () => {
+                if (shared("agents.command.ack")?.n !== n) run("space.new");
+              });
+            }
           }
         } catch (e) {
           console.log(`command-bar: command failed: ${e}`);

@@ -1117,7 +1117,7 @@ export class Palette extends Workspace {
             .when(tally.working > 0, (el) => el.child(chip("working")))
             .when(tally.done > 0, (el) => el.child(chip("done")))))
         .child(h_flex().gap(6).items_center()
-          .child(keycap(t, shortcutOf("agents-list.new_space") || shortcutOf("space.new")))
+          .child(keycap(t, shortcutOf("command-bar.new_space") || shortcutOf("agents-list.new_space") || shortcutOf("space.new")))
           .child(div().text_size(10).text_color(t.muted).child("new space")))
         .child(keycap(t, shortcutOf("mod.open:agents-list") || "alt f")))
       .child(h_flex().h(44).flex_none().px(13).gap(10).items_center().rounded(11)

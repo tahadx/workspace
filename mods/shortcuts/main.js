@@ -46,13 +46,24 @@ const heading = (section) =>
 // Commands of this setup's own panels: their names are ours, so they get names a
 // person reads, not `panel.command`.
 const OURS = {
+  "command-bar.dir_down": "Move down: a pane or the list with the keyboard",
+  "command-bar.dir_up": "Move up: a pane or the list with the keyboard",
+  "command-bar.flip_layout": "Flip the sidebar to the other side",
+  "command-bar.worktree_new": "New worktree",
+  "command-bar.close_pane": "Close this pane",
+  "command-bar.close_tab": "Close this tab",
+  "command-bar.focus_sidebar": "Move the keyboard into the sidebar (and back)",
+  "command-bar.new_space": "New space",
+  "command-bar.close_space": "Close the active space",
+  "command-bar.worktree_open": "Open worktree",
+  "command-bar.worktree_remove": "Remove worktree",
+  // Still named, so a key rebound to the old panel or the footer keeps a label.
   "agents-list.dir_down": "Move down: a pane or the list with the keyboard",
   "agents-list.dir_up": "Move up: a pane or the list with the keyboard",
   "agents-list.flip_layout": "Flip the sidebar to the other side",
   "agents-list.worktree_new": "New worktree",
   "agents-list.close_pane": "Close this pane",
   "agents-list.close_tab": "Close this tab",
-  // Still named, so a key rebound to the footer or the terminals list keeps a label.
   "footer.dir_down": "Move down: a pane or the search list",
   "footer.dir_up": "Move up: a pane or the search list",
   "footer.flip_layout": "Flip the sidebar to the other side",

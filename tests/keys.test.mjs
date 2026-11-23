@@ -20,6 +20,7 @@ const read = (file) => readFileSync(join(root, file), "utf8");
 const core = read("mods/agents-list/workspace-engine.js");
 const palette = read("mods/agents-list/palette.js");
 const side = read("mods/agents-list/sidebar.js");
+const bar = read("mods/command-bar/main.js");
 const foot = read("mods/footer/main.js");
 const sheet = read("mods/shortcuts/main.js");
 const bindings = JSON.parse(read("keys.json"));
@@ -70,23 +71,31 @@ check("the sidebar reads the shared map before the modifier return",
   sideChord > 0 && sideReturn > 0 && sideChord < sideReturn,
   "the chords would fall through to the app");
 
-// Ctrl+J/K, the flip, the closes and Ctrl+Shift+B are the sidebar's commands:
-// the sidebar is mounted on the rail too, while the footer and the terminals
-// list are put away there. The footer keeps the same hand-off for a key someone
-// rebound onto it. There is no edge tab to rescue a hidden sidebar any more:
-// Ctrl+Shift+B collapses it instead.
+// Ctrl+J/K, the flip, the closes and Ctrl+Shift+B are bound to the always-
+// mounted command bar: Herdr delivers `<mod>.<command>` to shown copies only, so
+// a key bound to `agents-list.*` dies when the sidebar is fully hidden. The bar
+// runs the walk itself and relays the sidebar-only commands to its timer.
 check("the sidebar gives Ctrl+J/K to itself while it has the keyboard",
   /if \(shared\("sidebar\.kb"\)\) return setShared\("sidebar\.move"/.test(side));
 check("the sidebar handles the layout keys and the collapse",
   /if \(c === "flip_layout"\) return flipLayout\(\)/.test(side)
   && /if \(c === "close_pane" \|\| c === "close_tab"\) return closeFocused\(c\)/.test(side)
   && /if \(c === "toggle_sidebar"\) return toggleSidebar\(\)/.test(side));
-check("the layout points the walk, the flip, the closes and the collapse at the sidebar",
-  bindings["layout:workspace"]["ctrl-j"] === "agents-list.dir_down"
-  && bindings["layout:workspace"]["ctrl-shift-m"] === "agents-list.flip_layout"
-  && bindings["layout:workspace"]["ctrl-shift-x"] === "agents-list.close_pane"
-  && bindings["layout:workspace"]["ctrl-shift-b"] === "agents-list.toggle_sidebar");
-check("Ctrl+Shift+B no longer hides the sidebar",
+check("the layout points the walk, the flip, the closes and the collapse at the command bar",
+  bindings["layout:workspace"]["ctrl-j"] === "command-bar.dir_down"
+  && bindings["layout:workspace"]["ctrl-shift-m"] === "command-bar.flip_layout"
+  && bindings["layout:workspace"]["ctrl-shift-x"] === "command-bar.close_pane"
+  && bindings["layout:workspace"]["ctrl-shift-b"] === "command-bar.cycle_sidebar");
+check("the command bar relays the sidebar-only commands",
+  /const RELAYED = new Set\(\["new_space"/.test(bar)
+  && /setShared\("agents\.command", \{ c: command, n, at: Date\.now\(\) \}\)/.test(bar));
+check("the sidebar takes relayed commands on its timer",
+  /this\.watchCommands\(cx\)/.test(side)
+  && /shared\("agents\.command"\)/.test(side)
+  && /setShared\("agents\.command\.ack"/.test(side));
+check("New space falls back when no sidebar copy has started",
+  /cx\.timer\.after\(1000[\s\S]{0,180}run\("space\.new"\)/.test(bar));
+check("Ctrl+Shift+B is this layout's, not Herdr's global",
   bindings.global?.["ctrl-shift-b"] === undefined
   && !/layout\.toggle:sidebar/.test(read("keys.json"))
   && !existsSync(join(root, "mods", "handle", "main.js")));

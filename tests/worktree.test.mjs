@@ -204,7 +204,7 @@ check("a stale sheet read cannot overwrite a newer one",
     JSON.stringify(go.calls));
   check("the sidebar's New space uses the shared place rule",
     /if \(c === "new_space"\) \{ if \(this\.newSpace\(\)/.test(sidebar)
-    && /"New space", \(\) => this\.newSpace\(\)/.test(sidebar));
+    && /label: "New space", act: then\(\(\) => this\.newSpace\(\)\)/.test(sidebar));
 
   // The sheet cannot be left floating over the space it just made: a missed
   // render kept it open (and sometimes empty) with an old list. The sidebar

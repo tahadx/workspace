@@ -69,7 +69,8 @@ avatar per place in the list's own order, pinned first. Each avatar carries its
 state mark in the corner — a spinner while working, `!` when it needs you, a
 filled dot when done, a ring when idle — and the active place is lit. Past nine
 places an ellipsis opens the sidebar again; `Ctrl+1`…`Ctrl+9` reach the first
-nine; a right-click gives the sidebar's menu.
+nine; a right-click gives the sidebar's menu. `Ctrl+Shift+B` again hides the
+column completely; the layout's keys stay on the command bar and keep working.
 
 ## Install
 
@@ -88,8 +89,9 @@ only the bindings your file is missing. `HERDR_APP_HOME` installs elsewhere.
 
 ## Keys
 
-`Ctrl+Shift+B` folds the sidebar to its rail, `Alt+B` puts the keyboard in it,
-`Alt+F` opens the search sheet. Every binding is in
+`Ctrl+Shift+B` cycles the sidebar wide → rail → hidden, `Alt+B` puts the
+keyboard in it, `Alt+F` opens the search sheet. The sidebar's own keys live on
+the command bar, so they keep working while it is hidden. Every binding is in
 [docs/bindings.md](docs/bindings.md).
 
 ## Theme

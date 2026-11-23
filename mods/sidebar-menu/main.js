@@ -56,7 +56,7 @@ export default class LayoutMenu extends View {
   render() {
     const t = theme();
     const left = layout()?.children?.[0]?.id === "sidebar";
-    const moveKey = binding("agents-list.flip_layout") || binding("footer.flip_layout");
+    const moveKey = binding("command-bar.flip_layout") || binding("agents-list.flip_layout") || binding("footer.flip_layout");
     const move = () => { flipLayout(); closeOverlay(props()?.overlay); };
     const row = (id, icon, label, hint, action) => h_flex().id(id).h(32).flex_none().px(8).gap(10).items_center().rounded(7)
       .text_color(t.muted).hover((s) => s.bg(wash(t.foreground, "0b")).text_color(t.foreground)).cursor_pointer()

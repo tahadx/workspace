@@ -55,10 +55,10 @@ try {
     layout["alt-f"] === "mod.open:agents-list", JSON.stringify(layout["alt-f"]));
   check("the tab and space numbers are installed",
     layout["alt-1"] === "tab.select:1" && layout["ctrl-1"] === "space.select:1");
-  check("the sidebar walk is installed",
-    layout["ctrl-j"] === "agents-list.dir_down" && layout["ctrl-k"] === "agents-list.dir_up");
-  check("Ctrl+Shift+B collapses the sidebar in this layout",
-    layout["ctrl-shift-b"] === "agents-list.toggle_sidebar"
+  check("the walk is installed on the always-mounted command bar",
+    layout["ctrl-j"] === "command-bar.dir_down" && layout["ctrl-k"] === "command-bar.dir_up");
+  check("Ctrl+Shift+B cycles the sidebar in this layout",
+    layout["ctrl-shift-b"] === "command-bar.cycle_sidebar"
     && keys.global?.["ctrl-shift-b"] === undefined);
 
   check("the person's own global key is kept",

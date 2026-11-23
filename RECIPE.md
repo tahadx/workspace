@@ -267,9 +267,11 @@ and offers to make one.
 - `Ctrl+Shift+M` flips the whole sidebar to the other side (the layout's two root
   children swap, and with them the panel and the terminal pane); `Ctrl+Shift+D`
   opens the new-worktree dialog for the space you are in.
-- Those keys, and `Ctrl+Shift+X` / `Ctrl+Shift+W`, are `agents-list.*` commands on
-  the sidebar. It stays mounted when the rail folds and the footer and the
-  terminals list are put away.
+- Those keys, and `Ctrl+Shift+X` / `Ctrl+Shift+W`, are `command-bar.*` commands.
+  The command bar is mounted in every sidebar mode: it runs the walk itself and
+  relays the sidebar-only commands to the sidebar copy, so they still work when
+  the sidebar is fully hidden — `<mod>.<command>` reaches shown copies only, and
+  a hidden sidebar gets none.
 
 **The search sheet** (720 × 560, opened by `Alt+F` or the sidebar's magnifier)
 
@@ -288,12 +290,17 @@ and offers to make one.
   move, `Enter` to go (space → select it, agent → focus it, worktree → open it,
   pin → open a space there, or go to the space already there).
 - **`Ctrl+J`/`Ctrl+K` are shared with pane movement, and separated by the panel.**
-  `keys.json` (under `layout:workspace`) binds them to `agents-list.dir_down`/`dir_up`,
+  `keys.json` (under `layout:workspace`) binds them to `command-bar.dir_down`/`dir_up`,
   which moves pane focus when no panel is open, hands them to the search sheet when
   it is (`shared("search.open")` → `shared("search.move")`), and to the sidebar
   when its keyboard is there (`shared("sidebar.kb")` → `shared("sidebar.move")`).
-  Both panels poll every 70 ms. Each also handles `ctrl+j`/`ctrl+k` itself in case
-  nothing binds them. One press is one row, never two. `Ctrl+P` pins or unpins the row, `Ctrl+R` renames the
+  The sheet polls every 60 ms; the sidebar's walk does too. Each also handles
+  `ctrl+j`/`ctrl+k` itself in case nothing binds them. One press is one row, never two.
+  Close pane/tab and the flip run in the bar itself; new space, the worktree
+  dialogs and close space travel as `shared("agents.command")`, because the
+  sidebar's 200 ms timer keeps running while it is hidden and takes them there.
+  `new_space` falls back to `space.new` if no sidebar copy has started this
+  launch. `Ctrl+P` pins or unpins the row, `Ctrl+R` renames the
   space, `Ctrl+A` makes a worktree for the selection, `Ctrl+Shift+J`/`K` slide the
   highlighted space through the order, `Ctrl+Backspace` deletes a word, `Esc` closes.
 - **A hit comes with what it belongs to, all the way up.** A matched branch (a

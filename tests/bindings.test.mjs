@@ -79,9 +79,12 @@ check("the layout section carries the search key",
 check("the layout section carries its tab and space numbers",
   keys["layout:workspace"]?.["alt-1"] === "tab.select:1"
   && keys["layout:workspace"]?.["ctrl-1"] === "space.select:1");
-check("the layout's New space goes through the sidebar's place rule",
-  keys["layout:workspace"]?.["ctrl-shift-n"] === "agents-list.new_space",
-  "ctrl-shift-n would inherit the focused worktree's folder");
+check("the layout's New space still uses the sidebar's place rule",
+  keys["layout:workspace"]?.["ctrl-shift-n"] === "command-bar.new_space",
+  "the command bar would make a plain space instead of relaying to the sidebar");
+check("the command bar relays the sidebar commands it takes",
+  /const RELAYED = new Set\(\["new_space"/.test(read("mods/command-bar/main.js")),
+  "a command-bar key with no relay would die while the sidebar is shown only on the rail");
 check("install.sh adds app-wide keys only where the person has none",
   /for name in \("global", "terminal"\)/.test(install)
   && /if key in target or \(not fill and key in ours\)/.test(install),

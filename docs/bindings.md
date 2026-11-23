@@ -67,10 +67,13 @@ themselves, only while they hold the keyboard, so they never shadow a terminal.
 
 ## This layout
 
+These keys live on the always-mounted command bar, so they keep working in every
+sidebar mode — wide, rail, and fully hidden.
+
 | Key | Action |
 | --- | --- |
 | `ctrl-j` / `ctrl-k` | Move to the pane below or above — or walk the search sheet or the sidebar while it has the keyboard |
-| `ctrl-shift-b` | Collapse the sidebar to the rail, or expand it again |
+| `ctrl-shift-b` | Cycle the sidebar: wide, rail, hidden |
 | `ctrl-shift-m` | Move the sidebar to the other side |
 | `ctrl-shift-d` | Make a worktree in the active space's repo |
 | `alt-b` | Put the keyboard in the sidebar, and back |
@@ -238,20 +241,20 @@ your other sections and merges this layout's. The three sections are `global`,
     "alt-enter": "pane.split:down",
     "alt-shift-enter": "pane.split:right",
     "alt-escape": "pane.close",
-    "ctrl-j": "agents-list.dir_down",
-    "ctrl-k": "agents-list.dir_up",
-    "ctrl-shift-x": "agents-list.close_pane",
-    "ctrl-shift-w": "agents-list.close_tab",
-    "ctrl-shift-m": "agents-list.flip_layout",
-    "ctrl-shift-d": "agents-list.worktree_new",
-    "ctrl-shift-b": "agents-list.toggle_sidebar",
-    "alt-b": "agents-list.focus_sidebar",
-    "alt-shift-n": "agents-list.new_space",
-    "ctrl-shift-n": "agents-list.new_space",
-    "alt-shift-q": "agents-list.close_space",
-    "alt-w": "agents-list.worktree_new",
-    "alt-shift-w": "agents-list.worktree_open",
-    "alt-shift-r": "agents-list.worktree_remove"
+    "ctrl-j": "command-bar.dir_down",
+    "ctrl-k": "command-bar.dir_up",
+    "ctrl-shift-x": "command-bar.close_pane",
+    "ctrl-shift-w": "command-bar.close_tab",
+    "ctrl-shift-m": "command-bar.flip_layout",
+    "ctrl-shift-d": "command-bar.worktree_new",
+    "ctrl-shift-b": "command-bar.cycle_sidebar",
+    "alt-b": "command-bar.focus_sidebar",
+    "alt-shift-n": "command-bar.new_space",
+    "ctrl-shift-n": "command-bar.new_space",
+    "alt-shift-q": "command-bar.close_space",
+    "alt-w": "command-bar.worktree_new",
+    "alt-shift-w": "command-bar.worktree_open",
+    "alt-shift-r": "command-bar.worktree_remove"
   },
   "terminal": {
     "ctrl-backspace": "send:\u0017",
