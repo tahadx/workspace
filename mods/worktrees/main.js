@@ -41,8 +41,27 @@ const REMOVING = "worktree.removing";
 const removing = () => {
   const list = shared(REMOVING);
   if (!Array.isArray(list)) return [];
-  const since = Date.now() - 5 * 60_000;
+  // Fifteen minutes: longer than git's own 600 s removal timeout, so a slow
+  // removal never reads as finished just because this net expired.
+  const since = Date.now() - 15 * 60_000;
   return list.filter((r) => (r.at ?? 0) > since);
+};
+// A removal that failed keeps its reason on the row, not only in a toast that
+// can pass unseen. The sidebar writes and reads the same key.
+const FAILED = "worktree.removalFailed";
+const failedKey = (path, on) => `${on ?? ""}\u0000${norm(path)}`;
+const clearFailed = (path, on) => {
+  const all = shared(FAILED);
+  if (!all || typeof all !== "object") return;
+  const key = failedKey(path, on);
+  if (!(key in all)) return;
+  const next = { ...all };
+  delete next[key];
+  setShared(FAILED, next);
+};
+const markFailed = (path, on, error) => {
+  const all = shared(FAILED);
+  setShared(FAILED, { ...(all && typeof all === "object" ? all : {}), [failedKey(path, on)]: { error: String(error ?? ""), at: Date.now() } });
 };
 // Whether a layout shows a mod anywhere: a block nested in a column counts.
 function shownBy(node, mod) {
@@ -262,7 +281,21 @@ export default class Worktree extends View {
     if (this.busy) return;
     if (props()?.agent) return this.stop();
     if (props()?.action === "space") return this.removeSpace(cx);
-    if (!this.repo) return;
+    // Enter used to do nothing at all until the git reads finished (the repo is
+    // set last, once the dirty and submodule warnings are known). Say so, and
+    // never let a removal read as asked when no git command has run.
+    if (props()?.action === "remove" && this.repo === undefined) {
+      this.error = "Still checking this checkout for uncommitted work. Press Enter again in a moment.";
+      cx?.notify();
+      return;
+    }
+    if (!this.repo) {
+      this.error = props()?.action === "remove"
+        ? "This folder is not a linked git worktree any more, so there is nothing to remove. Press Escape."
+        : "This folder is not in a git repository.";
+      cx?.notify();
+      return;
+    }
     // Asked and answered: a removal changes the list now and lets git follow.
     if (props().action === "remove") return this.removeNow(cx);
     cx.spawn(async (cx) => this.work(cx));
@@ -360,7 +393,13 @@ export default class Worktree extends View {
       spaces: closing.map((s) => s.id).filter(Boolean),
       pins: this.pinsAfter(closing, r.top),
     };
-    setShared(REMOVING, [...removing(), { path: r.top, machine: this.on ?? null, at }]);
+    // A new attempt is a new claim: the old reason goes, and the entry carries
+    // everything a watchdog needs to finish the job if no panel takes it.
+    clearFailed(r.top, this.on ?? null);
+    setShared(REMOVING, [...removing(), {
+      path: r.top, machine: this.on ?? null, at, state: "queued", error: "",
+      main: job.main, force: job.force, spaces: job.spaces, pins: job.pins,
+    }]);
     // A layout without the sidebar has nobody to take the job, so this dialog
     // stays and runs it. The checkout is hidden either way.
     if (!shownBy(layout(), "agents-list")) return cx.spawn(async (cx) => this.workJob(job, cx));
@@ -380,6 +419,9 @@ export default class Worktree extends View {
     const closeSpaces = () => {
       for (const id of job.spaces ?? []) closeSpace(id);
     };
+    const mine = (x) => norm(x.path) === norm(job.top) && (x.machine ?? null) === (job.on ?? null);
+    // Claimed here: the watchdog must not start a second git for this checkout.
+    setShared(REMOVING, removing().map((x) => (mine(x) ? { ...x, state: "running", error: "" } : x)));
     const windows = window()?.platform === "windows";
     if (windows) closeSpaces();
     const r = await git(job.main, ["worktree", "remove", ...(job.force ? ["--force"] : []), job.top], job.on, 600_000);
@@ -387,13 +429,15 @@ export default class Worktree extends View {
       this.busy = false;
       this.detail = "";
       this.error = r.err || "git worktree remove failed.";
-      setShared(REMOVING, removing().filter((x) => !(norm(x.path) === norm(job.top) && (x.machine ?? null) === job.on)));
+      markFailed(job.top, job.on ?? null, this.error);
+      setShared(REMOVING, removing().filter((x) => !mine(x)));
       cx.notify();
       return;
     }
     if (!windows) closeSpaces();
     if (Array.isArray(job.pins)) setShared("spaces.pinned", job.pins);
-    setShared(REMOVING, removing().filter((x) => !(norm(x.path) === norm(job.top) && (x.machine ?? null) === job.on)));
+    clearFailed(job.top, job.on ?? null);
+    setShared(REMOVING, removing().filter((x) => !mine(x)));
     this.busy = false;
     this.close();
   }

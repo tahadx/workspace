@@ -249,11 +249,53 @@ export const removingList = () => {
   if (removingList.bucket === bucket && removingList.mark === mark) return removingList.kept;
   removingList.bucket = bucket;
   removingList.mark = mark;
-  const since = Date.now() - 5 * 60_000;
+  // Fifteen minutes: longer than git's own 600 s removal timeout, so a slow
+  // removal never reads as finished just because this net expired.
+  const since = Date.now() - 15 * 60_000;
   return (removingList.kept = list.filter((r) => (r.at ?? 0) > since));
 };
 export const isRemoving = (path, machine) => Boolean(path) && removingList()
   .some((r) => (r.machine ?? null) === (machine ?? null) && tidyPath(r.path) === tidyPath(path));
+
+// A checkout's removal as a row reads it: "removing" while git is working on
+// it, "failed" when it came back with a reason. The row keeps its place in both
+// cases — hiding it before git agreed is what made a failed removal look done.
+export const removalOf = (path, machine) => {
+  if (!path) return null;
+  const entry = removingList().find((r) => (r.machine ?? null) === (machine ?? null) && tidyPath(r.path) === tidyPath(path));
+  if (entry) return { status: "removing", error: entry.error ?? "", at: entry.at ?? 0 };
+  const failed = shared("worktree.removalFailed");
+  if (!failed || typeof failed !== "object") return null;
+  const hit = failed[`${machine ?? ""}\u0000${tidyPath(path)}`];
+  if (!hit) return null;
+  // A reason is for the person who just tried; half an hour is long enough to
+  // read it, and short enough that a checkout made later at the same path is
+  // never born wearing an old failure.
+  if (Date.now() - (hit.at ?? 0) > 30 * 60_000) return null;
+  return { status: "failed", error: hit.error || "git worktree remove failed.", at: hit.at ?? 0 };
+};
+
+// A removal that came back with a reason stays on its row until the next
+// attempt (or until the checkout is gone), so the person can read it without
+// chasing a toast. The worktrees dialog is its own mod and writes the same key.
+export const setRemovalFailure = (path, machine, error) => {
+  if (!path) return;
+  const all = shared("worktree.removalFailed");
+  const next = all && typeof all === "object" ? { ...all } : {};
+  next[`${machine ?? ""}\u0000${tidyPath(path)}`] = { error: String(error ?? ""), at: Date.now() };
+  setShared("worktree.removalFailed", next);
+};
+
+export const clearRemovalFailure = (path, machine) => {
+  if (!path) return;
+  const all = shared("worktree.removalFailed");
+  if (!all || typeof all !== "object") return;
+  const key = `${machine ?? ""}\u0000${tidyPath(path)}`;
+  if (!(key in all)) return;
+  const next = { ...all };
+  delete next[key];
+  setShared("worktree.removalFailed", next);
+};
 
 // The space already standing in a folder — the same place, not one of its
 // subfolders. A pin is a place, so this is what says "there is a space here".
@@ -1472,6 +1514,18 @@ export class Workspace extends View {
     return null;
   }
 
+  // A row's removal, read by both views: a checkout while git works on it, the
+  // space standing in it, or null. Only the checkout row and a worktree space can
+  // be on their way out; a plain space close has no git step to show.
+  removalForRow(r) {
+    if (!r) return null;
+    if (r.kind === "worktree") return removalOf(r.c?.path, r.on ?? null);
+    if (r.kind !== "space" || !r.s) return null;
+    const rec = this.checkoutRecord(r.s, this.paneSnap);
+    if (!rec) return null;
+    return removalOf(rec.root ?? r.s.folder, r.s.machine ?? null);
+  }
+
   // How a view opens a dialog. The sidebar adds its own flag so it can take the
   // keyboard back when the dialog closes; an overlay over the sheet does not
   // need that. Both views call this, so every action asks in the same place.
@@ -1489,6 +1543,9 @@ export class Workspace extends View {
   // Enter on a row, and a click on it: one implementation for both views.
   openRow(r, cx) {
     if (!r) return;
+    // A row on its way out is not a place to go while git is working on it:
+    // the folder may be half gone, and the row is already saying so.
+    if (this.removalForRow(r)?.status === "removing") return;
     this.beforeOpen(cx);
     if (r.kind === "space") {
       this.openSpace(r.s);
@@ -1546,6 +1603,9 @@ export class Workspace extends View {
   // or take a pin away. One rule for both views.
   closeRow(r) {
     if (!r) return;
+    // Already on its way out: asking again would queue a second removal for the
+    // same checkout. A failed one stays available, so Ctrl+D retries it.
+    if (this.removalForRow(r)?.status === "removing") return;
     if (r.kind === "agent") return this.askStop(r.a);
     if (r.kind === "pin") return this.unpinPin(r.pin);
     if (r.kind === "checkout") {

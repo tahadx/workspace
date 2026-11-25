@@ -5,7 +5,7 @@ import { div, image, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { agents, terminals, panes, focused, spaces, machines, run, exec, hc, theme, shared, setShared, setAgentOrder, openOverlay, closeOverlay, props, window, layout, watchFolder, notify } from "herdr";
 import {
-  Workspace, wash, place, norm, tidyPath, base, inWorktrees, isRemoving, removingList,
+  Workspace, wash, place, norm, tidyPath, base, inWorktrees, removingList, removalOf, setRemovalFailure, clearRemovalFailure,
   pinnedList, pinnedRepo, isPinned, checkouts, dropGitCache, worktreeTree, spaceColor, RANK, MARK,
   pinLabel, folderColor, placeCount,
   onGitRefresh, takeGitAsk, touchWorkspace, listedCheckouts, pictureKey,
@@ -51,6 +51,19 @@ function find(node, id) {
 
 // The sidebar's rail goes by its width, not a flag: dragging its edge narrows it too.
 const narrow = () => (find(frameCache("layout", layout), "sidebar")?.size?.px ?? Infinity) < 160;
+
+// A checkout's row while git works on it, and after a failed attempt. The row
+// keeps its place in both cases: "gone" must never mean "asked and forgot".
+const removalTag = (t, removal) => {
+  if (!removal) return null;
+  if (removal.status === "removing") {
+    return h_flex().flex_none().gap(5).items_center()
+      .child(div().frames(["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"], 90).text_size(10).text_color(t.dim))
+      .child(div().text_size(9.5).text_color(t.dim).child("Removing…"));
+  }
+  return h_flex().flex_none().gap(4).items_center().tooltip(removal.error)
+    .child(div().text_size(9.5).text_color(t.blocked).child("Couldn't remove"));
+};
 
 // The list's bar: this far in from the top and bottom, and the width of the
 // lane the pointer can grab (the thumb itself is thinner).
@@ -1006,26 +1019,47 @@ export class Sidebar extends Workspace {
   // here, in the panel that stays. The checkout is already hidden (the dialog
   // put it in "worktree.removing"); this is what makes that true.
   watchJob(cx) {
+    this.jobs ??= [];
+    this.taken ??= new Set();
     const queued = shared("worktree.jobs");
     const job = shared("worktree.job");
     // The dialog appends to the list and also sets the single slot, so a second
     // confirm before this timer runs does not erase the first removal.
     const batch = Array.isArray(queued) && queued.length ? queued : (job ? [job] : []);
-    if (!batch.length) return;
-    setShared("worktree.job", null);
-    setShared("worktree.jobs", null);
-    this.jobs ??= [];
-    this.taken ??= new Set();
-    for (const item of batch) {
-      if (!item) continue;
-      // `at` is Date.now(), so two confirms in one millisecond share it. The
-      // checkout path keeps them distinct. A job already taken is not run twice
-      // when a later confirm rewrites the list with both.
-      const id = `${item.at}\u0000${item.top}`;
+    if (batch.length) {
+      setShared("worktree.job", null);
+      setShared("worktree.jobs", null);
+      for (const item of batch) {
+        if (!item) continue;
+        // `at` is Date.now(), so two confirms in one millisecond share it. The
+        // checkout path keeps them distinct. A job already taken is not run twice
+        // when a later confirm rewrites the list with both. The path is tidied
+        // here, as the watchdog below does, so a trailing slash cannot make the
+        // same checkout look like two jobs.
+        const id = `${item.at}\u0000${tidyPath(item.top)}`;
+        if (this.taken.has(id)) continue;
+        this.taken.add(id);
+        this.jobAt = item.at;
+        this.jobs.push(item);
+      }
+    }
+    // A removal the dialog queued but no copy ever took (the panel reloaded, the
+    // layout changed, the sheet was used alone) must not leave its row on its way
+    // out forever. After a grace, the entry it wrote is enough to run the job
+    // here; an entry already claimed is left alone.
+    const now = Date.now();
+    for (const r of removingList()) {
+      if (r.state === "running" || !r.main) continue;
+      if (now - (r.at ?? 0) < 4000) continue;
+      const id = `${r.at ?? 0}\u0000${tidyPath(r.path)}`;
       if (this.taken.has(id)) continue;
       this.taken.add(id);
-      this.jobAt = item.at;
-      this.jobs.push(item);
+      this.jobs.push({
+        at: r.at, top: r.path, main: r.main, on: r.machine ?? null,
+        // Only the dialog's own `force: true` forces. A queued entry that lost
+        // the flag must not remove uncommitted work by default.
+        force: r.force === true, spaces: r.spaces ?? [], pins: r.pins ?? null,
+      });
     }
     if (!this.jobs.length || this.jobBusy) return;
     this.jobBusy = true;
@@ -1055,6 +1089,8 @@ export class Sidebar extends Workspace {
   async runWorktreeJob(job, cx) {
     const on = job.on ?? null;
     const path = tidyPath(job.top);
+    // Claimed: the watchdog must not start a second git for this checkout.
+    setShared("worktree.removing", removingList().map((r) => ((r.machine ?? null) === on && tidyPath(r.path) === path ? { ...r, state: "running", error: "" } : r)));
     const windows = window()?.platform === "windows";
     const closeSpaces = () => {
       for (const id of job.spaces ?? []) closeSpace(id);
@@ -1099,9 +1135,11 @@ export class Sidebar extends Workspace {
       this.forgetRepo?.(job.main);
       this.noteTree?.();
       persistWorkspace();
+      clearRemovalFailure(path, on);
     } else {
-      // The checkout is still there: it comes back to the list with the reason.
-      // The cached rows stay, so it does not wait for a rescan to reappear.
+      // The checkout is still there: its row stays, with the reason on it. The
+      // cached rows stay too, so it does not wait for a rescan.
+      setRemovalFailure(path, on, error);
       notify({ title: "Couldn't remove the worktree", body: error });
     }
     setShared("worktree.removing", removingList().filter((r) => !((r.machine ?? null) === on && tidyPath(r.path) === path)));
@@ -2410,9 +2448,9 @@ export class Sidebar extends Workspace {
     // Search, sort and hide live in the header; the count gives way first when
     // the sidebar is narrow.
     const roomy = sidePx >= 210;
-    // A checkout on its way out takes its agents with it, before git has finished.
-    const leaving = new Set(spaceList.filter((s) => isRemoving(place(s, paneList) ?? s.folder, s.machine)).map((s) => s.id));
-    let list = agents().filter((a) => !leaving.has(a.space) && !removed.has(a.space));
+    // A checkout on its way out keeps its agents until git is done: the space is
+    // still there, and its row says it is leaving.
+    let list = agents().filter((a) => !removed.has(a.space));
     this.listed = new Map(list.map((a) => [a.address, a.status]));
     const all = terminals();
     const treeMemo = new Map();
@@ -2478,8 +2516,7 @@ export class Sidebar extends Workspace {
       // places, each with its avatar; the checkout stays in the expanded tree and search.
       // A worktree is a checkout under its repo, never a place of its own; the
       // shared rule knows one even after its shell cds out.
-      const places = spaceList.filter((sp) => !this.isWorktree(sp) && !removed.has(sp.id)
-        && !isRemoving(place(sp, paneList), sp.machine) && !isRemoving(sp.folder, sp.machine));
+      const places = spaceList.filter((sp) => !this.isWorktree(sp) && !removed.has(sp.id));
       // The same places, in the same order both lists draw: pinned slots first,
       // then needs you, done, working, idle. Collapsing the sidebar must not
       // reshuffle the avatars, and a status tick must move a cell only when it
@@ -2648,8 +2685,7 @@ export class Sidebar extends Workspace {
       // reorder, right-click menu) with the find sheet's tree under them: a section
       // per space urgency, every space listed, worktrees under their checkout,
       // and each space's agents one level in.
-      const allSpaces = spaceList.filter((s) => !removed.has(s.id)
-        && !isRemoving(place(s, paneList), s.machine) && !isRemoving(s.folder, s.machine));
+      const allSpaces = spaceList.filter((s) => !removed.has(s.id));
       const pinOf = (s) => this.spacePin(s);
       const kidsOf = new Map();
       for (const a of list) kidsOf.set(a.space, [...(kidsOf.get(a.space) ?? []), a]);
@@ -2718,7 +2754,6 @@ export class Sidebar extends Workspace {
         const out = [];
         for (const c of trees) {
           if (forest.checkoutParents.get(`${c.on ?? ""}\u0000${c.path}`) !== s.id) continue;
-          if (isRemoving(c.path, c.on)) continue;
           out.push(c);
         }
         const ordered = orderedPaths(groupKeyOf(s, paneList), out, (c) => c.path);
@@ -2784,6 +2819,7 @@ export class Sidebar extends Workspace {
         // is, and it never gains a space's drag or its pin.
         const linked = !tree && forest.worktrees.has(s.id);
         const pin = pinOf(s);
+        const removal = this.removalForRow({ kind: "space", s });
         const fill = spaceColor(t, s);
         // Folded, it still says what is hidden, and how urgent the agents inside
         // are: a chevron alone made "2 agents need you in here" invisible.
@@ -2825,6 +2861,7 @@ export class Sidebar extends Workspace {
           .overflow_hidden()
           .when(s.active, (el) => el.bg(t.selected))
           .when(this.kbPaint && this.sel === id, (el) => el.bg(wash(t.accent, "26")))
+          .when(removal?.status === "removing", (el) => el.opacity(0.7))
           .when(!s.active, (el) => el.hover((x) => x.bg(t.hover)))
           .when(this.pressed === s.id && this.over !== s.id, (el) => el.opacity(0.45))
           .when(overHere, (el) => el.child(div()
@@ -2932,7 +2969,9 @@ export class Sidebar extends Workspace {
           // The tail takes the row's slack, so the fold and the pin sit at the
           // end. A place without git yet (a new space, a folder outside a repo)
           // has no tail: the spacer does that job, or the pin lands mid-row.
-          .child(g ? this.gitTail(g, tree, label, t) : div().flex_1())
+          // A removal takes the tail's place: the row is saying what is happening.
+          .when(!removal, (el) => el.child(g ? this.gitTail(g, tree, label, t) : div().flex_1()))
+          .when(Boolean(removal), (el) => el.child(div().flex_1()).child(removalTag(t, removal)))
           .when(hidden > 0, (el) => el.child(countPill(t, hidden, topTone)))
           .child(div().size(18).flex_none().flex().items_center().justify_center()
             .when(kids.length > 0 || worktreesOf(s).length > 0 || checkoutsOf(s).length > 0, (el) => el.child(div()
@@ -2974,29 +3013,34 @@ export class Sidebar extends Workspace {
             .child(svg(`mods/icons/${pin && hovered ? "pin-off" : "pin"}.svg`).size(12)))));
       };
 
-      const checkoutRow = (s, c) => h_flex()
-        .id(`ck-${s.machine ?? ""}-${c.path}`)
-        .relative()
-        .mx(2)
-        .pl(36)
-        .pr(5)
-        .h(28)
-        .flex_none()
-        .gap(7)
-        .items_center()
-        .rounded(7)
-        .overflow_hidden()
-        .when(this.kbPaint && this.sel === `ck-${s.machine ?? ""}-${c.path}`, (x) => x.bg(wash(t.accent, "26")))
-        .hover((x) => x.bg(t.hover))
-        .cursor_pointer()
-        .tooltip(`${c.path} · click to open it as a space`)
-        .on_mouse_down("right", (_e, cx) => { cx.stop_propagation(); this.checkoutMenu(c.path, s.machine); })
-        .on_click(() => this.openCheckout({ path: c.path, on: s.machine ?? null, c }))
-        .child(div().absolute().left(30).top(0).bottom(0).w(1).bg(wash(t.foreground, "12")))
-        .child(div().absolute().left(30).top(15).w(7).h(1).bg(wash(t.foreground, "12")))
-        .child(svg("mods/workspace-chrome/branch.svg").size(12).flex_none().text_color(t.muted))
-        .child(div().flex_shrink(1).min_w(30).max_w(150).truncate().text_size(12).text_color(wash(t.foreground, "e6")).child(c.branch ?? base(c.path)))
-        .child(div().flex_1());
+      const checkoutRow = (s, c) => {
+        const removal = removalOf(c.path, s.machine ?? null);
+        return h_flex()
+          .id(`ck-${s.machine ?? ""}-${c.path}`)
+          .relative()
+          .mx(2)
+          .pl(36)
+          .pr(5)
+          .h(28)
+          .flex_none()
+          .gap(7)
+          .items_center()
+          .rounded(7)
+          .overflow_hidden()
+          .when(this.kbPaint && this.sel === `ck-${s.machine ?? ""}-${c.path}`, (x) => x.bg(wash(t.accent, "26")))
+          .when(removal?.status === "removing", (x) => x.opacity(0.7))
+          .hover((x) => x.bg(t.hover))
+          .cursor_pointer()
+          .tooltip(removal?.status === "failed" ? removal.error : `${c.path} · click to open it as a space`)
+          .on_mouse_down("right", (_e, cx) => { cx.stop_propagation(); this.checkoutMenu(c.path, s.machine); })
+          .on_click(() => { if (removal?.status === "removing") return; this.openCheckout({ path: c.path, on: s.machine ?? null, c }); })
+          .child(div().absolute().left(30).top(0).bottom(0).w(1).bg(wash(t.foreground, "12")))
+          .child(div().absolute().left(30).top(15).w(7).h(1).bg(wash(t.foreground, "12")))
+          .child(svg("mods/workspace-chrome/branch.svg").size(12).flex_none().text_color(t.muted))
+          .child(div().flex_shrink(1).min_w(30).max_w(150).truncate().text_size(12).text_color(wash(t.foreground, "e6")).child(c.branch ?? base(c.path)))
+          .when(!removal, (el) => el.child(div().flex_1()))
+          .when(Boolean(removal), (el) => el.child(div().flex_1()).child(removalTag(t, removal)));
+      };
 
       // A pin whose space is gone is still a place to open, exactly as the sheet
       // draws it. Leaving it out here made the two views disagree about how many
@@ -3202,7 +3246,6 @@ export class Sidebar extends Workspace {
           const key = `${c.on ?? ""}\u0000${tidyPath(c.path)}`;
           if (`${c.on ?? ""}${SEP}${tidyPath(c.repoMain ?? "")}` !== repo) continue;
           if (forest.checkoutParents.has(key) || forest.opened.has(key)) continue;
-          if (isRemoving(c.path, c.on)) continue;
           out.push(c);
         }
         return orderedPaths(repo, out, (c) => c.path);
@@ -3282,8 +3325,7 @@ export class Sidebar extends Workspace {
         const orphans = trees.filter((c) => (c.on ?? null) === m
           && !forest.checkoutParents.has(`${c.on ?? ""}\u0000${c.path}`)
           && !forest.opened.has(`${c.on ?? ""}\u0000${norm(c.path).replace(/\/+$/, "")}`)
-          && !drawnPinCheckouts.has(`${c.on ?? ""}${SEP}${tidyPath(c.path)}`)
-          && !isRemoving(c.path, c.on));
+          && !drawnPinCheckouts.has(`${c.on ?? ""}${SEP}${tidyPath(c.path)}`));
         const homeless = mine.filter((s) => forest.worktrees.has(s.id) && !forest.parents.has(s.id)
           && !drawnPinWorktrees.has(s.id));
         if (orphans.length || homeless.length) {

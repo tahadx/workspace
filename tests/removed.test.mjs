@@ -72,9 +72,10 @@ check("a sticky worktree keeps its repo in the scan",
 check("the sidebar hides removed spaces before the tree",
   /const removed = this\.removedWorktrees\(spaceList, paneList\);/.test(sidebar)
   && /const allSpaces = spaceList\.filter\(\(s\) => !removed\.has\(s\.id\)/.test(sidebar));
-check("the sidebar hides their agents in both list styles",
+check("the sidebar hides a removed space's agents in both list styles, and keeps a removing one's",
   /agents\(\)\.filter\(\(a\) => !this\.removedNow\?\.has\(a\.space\)\)/.test(sidebar)
-  && /!leaving\.has\(a\.space\) && !removed\.has\(a\.space\)/.test(sidebar));
+  && /let list = agents\(\)\.filter\(\(a\) => !removed\.has\(a\.space\)\);/.test(sidebar)
+  && !/leaving\.has\(a\.space\)/.test(sidebar));
 check("the rail leaves removed spaces out",
   /!this\.isWorktree\(sp\) && !removed\.has\(sp\.id\)/.test(sidebar));
 check("the sheet leaves removed spaces out",

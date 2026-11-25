@@ -6,12 +6,25 @@ import { v_flex, h_flex } from "gpui-base";
 import { spaces, agents, panes, run, closeOverlay, props, theme, settings, shared, setShared } from "herdr";
 import {
   Workspace, MARK, wash, tileOf, inkOf, marks, keycap, shortcutOf, place,
-  pinnedList, pinnedRepo, isRemoving, removingList, folderColor, pinLabel, norm, base,
+  pinnedList, pinnedRepo, removalOf, removingList, folderColor, pinLabel, norm, base,
   tidyPath, spaceColor, worktreeTree, RANK, askGit, listedCheckouts, pictureKey,
   beginPaint, endPaint, frameCache, scoreTerms, termsOf, spaceRecord,
   groupKeyOf, orderedPaths, orderedPlaces, placeCount, placeGroup, groupPlaces, ribbonPins, movePathWithin, machineIndexOf, persistWorkspace,
   touchWorkspace, SEP,
 } from "./workspace-engine.js";
+
+// A checkout's row while git works on it, and after a failed attempt. The row
+// keeps its place in both cases: "gone" must never mean "asked and forgot".
+const removalTag = (t, removal) => {
+  if (!removal) return null;
+  if (removal.status === "removing") {
+    return h_flex().flex_none().gap(5).items_center()
+      .child(div().frames(["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"], 90).text_size(10).text_color(t.dim))
+      .child(div().text_size(9.5).text_color(t.dim).child("Removing…"));
+  }
+  return h_flex().flex_none().gap(4).items_center().tooltip(removal.error)
+    .child(div().text_size(9.5).text_color(t.blocked).child("Couldn't remove"));
+};
 
 export class Palette extends Workspace {
   init(_props, cx) {
@@ -615,8 +628,9 @@ export class Palette extends Workspace {
     if (this._live && this._livePs === ps && Date.now() - (this._liveAt ?? 0) < 500) return this._live;
     const raw = frameCache("spaces", spaces);
     this.removedNow = this.removedWorktrees(raw, ps);
-    const list = raw.filter((s) => !this.removedNow.has(s.id)
-      && !isRemoving(place(s, ps), s.machine) && !isRemoving(s.folder, s.machine));
+    // A checkout on its way out keeps its row: the row says "Removing…" until
+    // git is done, and comes back with the reason if git refuses.
+    const list = raw.filter((s) => !this.removedNow.has(s.id));
     this._live = list;
     this._livePs = ps;
     this._liveAt = Date.now();
@@ -632,7 +646,7 @@ export class Palette extends Workspace {
     const opened = this.opened;
     const rows = [];
     for (const c of listedCheckouts()) {
-      if (c.main || isRemoving(c.path, c.on)) continue;
+      if (c.main) continue;
       if (opened?.has(`${c.on ?? ""}\u0000${norm(c.path).replace(/\/+$/, "")}`)) continue;
       rows.push({
         c: { path: c.path, branch: c.branch, main: false },
@@ -772,9 +786,9 @@ export class Palette extends Workspace {
         this.load(cx);
       }
     }
-    // A removal changed. The row hides while it is in progress (isRemoving) and
-    // comes back if git refuses, because the checkout list is only edited when
-    // the removal succeeds — the same list the sidebar draws.
+    // A removal changed. The row stays and says "Removing…" until git is done;
+    // the checkout list is only edited when the removal succeeds, and a failure
+    // leaves the row with its reason — the same list the sidebar draws.
     const removingNow = removingList().map((r) => `${r.machine ?? ""}\u0000${tidyPath(r.path)}`).sort().join("|");
     if (this.removingNow !== undefined && removingNow !== this.removingNow) this.load(cx);
     this.removingNow = removingNow;
@@ -876,6 +890,7 @@ export class Palette extends Workspace {
       const on = r === sel;
       if (r.kind === "space") {
         const s = r.s;
+        const removal = this.removalForRow(r);
         const branch = this.spaceGit(s, this.paneSnap)?.branch ?? s.branch;
         // A pin is a place: an unnamed pin reads its folder even when the program
         // in the space reports another folder (the reel pin read `~`). A space
@@ -885,6 +900,7 @@ export class Palette extends Workspace {
         return h_flex().id(`pal-${r.inPins ? "pin-" : ""}${s.id}`).relative().mx(4).pl(10 + (r.depth ?? 0) * 16).pr(10).h(36).rounded(9).gap(9).items_center()
           .when(on, (el) => el.bg(wash(t.accent, "16")))
           .when(!on, (el) => el.hover((x) => x.bg(wash(t.foreground, "0b"))))
+          .when(removal?.status === "removing", (el) => el.opacity(0.7))
           .when(this.pressed === s.id, (el) => el.opacity(0.55))
           .when(this.pressed !== null && this.over === s.id && this.pressed !== s.id, (el) => el.child(
             div().absolute().left(0).right(0).h(2).rounded(1).bg(t.accent)
@@ -892,7 +908,7 @@ export class Palette extends Workspace {
               .when((visual.get(this.pressed)?.m === visual.get(s.id)?.m) && (visual.get(this.pressed)?.n ?? 0) > (visual.get(s.id)?.n ?? 0), (line) => line.top(0)),
           ))
           .on_mouse_down("left", (_e, cx) => {
-            if (this.isWorktree(s)) return;
+            if (this.isWorktree(s) || removal) return;
             this.pressed = s.id;
             this.over = s.id;
             this.pressGroup = placeGroup(s, Boolean(r.inPins) || Boolean(this.spacePin(s)));
@@ -931,6 +947,7 @@ export class Palette extends Workspace {
           .when(Boolean(branch) && branch !== shown && !this.isWorktree(s), (el) => el.child(div().flex_none().max_w(130).truncate().px(5).h(17).rounded(4)
             .bg(wash(t.foreground, "0c")).text_size(9.5).text_color(wash(t.muted, "cc")).flex().items_center().child(branch)))
           .when(Boolean(s.machine), (el) => el.child(div().flex_none().max_w(90).truncate().text_size(9.5).text_color(wash(t.muted, "cc")).child(s.machine)))
+          .when(Boolean(removal), (el) => el.child(div().flex_1()).child(removalTag(t, removal)))
           .child(marker(Boolean(r.inPins) && !this.isWorktree(s) && Boolean(this.spacePin(s))
             ? svg("mods/icons/pin.svg").size(12).flex_none().text_color(wash(t.accent, "8c"))
             : div()));
@@ -958,9 +975,11 @@ export class Palette extends Workspace {
       }
       if (r.kind === "worktree") {
         const c = r.c;
+        const removal = this.removalForRow(r);
         return h_flex().id(`pal-wt-${r.inPins ? "pin-" : ""}${c.path}`).relative().mx(4).pl(10 + (r.depth ?? 0) * 16).pr(10).h(34).rounded(9).gap(9).items_center()
           .when(on, (el) => el.bg(wash(t.accent, "16")))
           .when(!on, (el) => el.hover((x) => x.bg(wash(t.foreground, "0b"))))
+          .when(removal?.status === "removing", (el) => el.opacity(0.7))
           .on_click(() => this.openRow(this.paletteRow(r)))
           .when(on, (el) => el.child(div().absolute().left(0).top(7).bottom(7).w(2).rounded(1).bg(t.accent)))
           .when(Boolean(r.depth), (el) => el.child(div().w(10).flex_none().text_size(10.5).text_color(wash(t.muted, "cc")).child("↳")))
@@ -968,6 +987,7 @@ export class Palette extends Workspace {
           .child(this.label(c.branch ?? c.path.split("/").pop(), t, 12.5, t.muted))
           .when(!r.depth, (el) => el.child(div().flex_none().max_w(120).truncate().text_size(9.5).text_color(wash(t.muted, "cc")).child(r.repo.name)))
           .when(c.main, (el) => el.child(div().text_size(9.5).text_color(wash(t.muted, "cc")).child("main")))
+          .when(Boolean(removal), (el) => el.child(div().flex_1()).child(removalTag(t, removal)))
           .child(marker(div()));
       }
       if (r.kind === "agent") {
