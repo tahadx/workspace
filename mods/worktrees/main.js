@@ -3,7 +3,7 @@
 
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, Scrollbar } from "gpui-base";
-import { run, props, closeOverlay, theme, spaces, panes, agents, exec, home, setShared, shared, layout, window } from "herdr";
+import { run, props, closeOverlay, theme, spaces, panes, agents, exec, home, setShared, shared, layout, window, notify } from "herdr";
 
 const wash = (c, a = "14") => (/^#[0-9a-fA-F]{6}$/.test(c ?? "") ? c + a : c);
 
@@ -63,11 +63,63 @@ const markFailed = (path, on, error) => {
   const all = shared(FAILED);
   setShared(FAILED, { ...(all && typeof all === "object" ? all : {}), [failedKey(path, on)]: { error: String(error ?? ""), at: Date.now() } });
 };
-// Whether a layout shows a mod anywhere: a block nested in a column counts.
+// Whether the layout shows a mod right now: a block nested in a column counts,
+// but a hidden branch and a stack's unselected children do not. A hidden block
+// keeps a started copy alive, yet it may never have started one — and the
+// hand-off needs a copy that is there. A hidden sidebar was exactly the case
+// where a removal was queued and then nobody ever ran it.
 function shownBy(node, mod) {
-  if (node?.content?.mod === mod) return true;
-  return (node?.children ?? []).some((child) => shownBy(child, mod));
+  if (!node || node.hidden) return false;
+  if (node.type === "stack") {
+    const active = (node.children ?? []).find((child) => child.id === node.active);
+    return active ? shownBy(active, mod) : false;
+  }
+  if (node.content?.mod === mod) return true;
+  return (node.children ?? []).some((child) => shownBy(child, mod));
 }
+
+// A checkout can be deleted while Herdr is closed or its sidebar is hidden
+// (another agent, `git worktree remove` in a terminal). The cached row then
+// names a folder that no longer exists: repoOf() finds no repo, so the remove
+// dialog can only say "not a worktree" and the row is stuck. The sidebar and
+// the sheet draw from this shared picture; clear the row here so the action
+// that was refused becomes the one that clears it.
+const cachedCheckout = (path) => {
+  const root = norm(path);
+  const trees = shared("workspace.state")?.trees;
+  if (!root || !trees || typeof trees !== "object") return false;
+  return Object.values(trees).some((list) => Array.isArray(list) && list.some((c) => norm(c?.path) === root));
+};
+const forgetCheckout = (path) => {
+  const root = norm(path);
+  if (!root) return false;
+  const on = props()?.machine ?? null;
+  const raw = shared("workspace.state");
+  if (!raw || typeof raw !== "object") return false;
+  const trees = { ...(raw.trees ?? {}) };
+  const git = { ...(raw.git ?? {}) };
+  const pins = { ...(raw.spaces ?? {}) };
+  const live = new Set(spaces().map((s) => s.id));
+  let changed = false;
+  for (const [key, list] of Object.entries(trees)) {
+    if (!Array.isArray(list)) continue;
+    const next = list.filter((c) => norm(c?.path) !== root);
+    if (next.length !== list.length) { trees[key] = next; changed = true; }
+  }
+  for (const [key, rec] of Object.entries(git)) {
+    if (norm(rec?.root) === root || key === `${on ?? ""}\u001f${root}`) { delete git[key]; changed = true; }
+  }
+  for (const [id, rec] of Object.entries(pins)) {
+    if (!live.has(id) && rec?.isWorktree && (norm(rec.worktreePath) === root || norm(rec.root) === root)) {
+      delete pins[id];
+      changed = true;
+    }
+  }
+  if (!changed) return false;
+  setShared("workspace.state", { ...raw, trees, git, spaces: pins });
+  clearFailed(root, on);
+  return true;
+};
 
 const keycap = (t, label) => div().flex_none().h(18).px(5).rounded(4)
   .bg(wash(t.foreground, "0a")).border(1).border_color(wash(t.foreground, "0e"))
@@ -214,6 +266,7 @@ export default class Worktree extends View {
     this.busy = false;
     this.error = "";
     this.repo = undefined; // undefined: looking, null: not in git
+    this.staleCheckout = false; // a cached checkout whose folder is already gone
     this.dirty = false;
     this.mods = 0; // submodules found, so a removal knows whether to force
     this.unpushed = [];
@@ -232,6 +285,7 @@ export default class Worktree extends View {
         this.folder = props()?.folder || place(this.space()) || this.userHome;
         // The repo is set last: Enter does nothing until the warnings it consents to are known.
         const repo = await repoOf(this.folder, this.on);
+        if (!repo && props()?.action === "remove") this.staleCheckout = cachedCheckout(this.folder);
         if (repo && props().action === "remove") {
           this.dirty = (await git(repo.top, ["--no-optional-locks", "-c", "core.fsmonitor=false", "status", "--porcelain"], this.on)).out !== "";
           const sub = await submodules(repo.top, this.on);
@@ -287,6 +341,15 @@ export default class Worktree extends View {
     if (props()?.action === "remove" && this.repo === undefined) {
       this.error = "Still checking this checkout for uncommitted work. Press Enter again in a moment.";
       cx?.notify();
+      return;
+    }
+    if (!this.repo && this.staleCheckout) {
+      // git has already removed this checkout; the row is only a cached answer.
+      // Clearing it here makes the refused removal do what the person asked.
+      if (forgetCheckout(props()?.folder ?? this.folder)) {
+        notify({ title: "Worktree already gone", body: "Its row was cleared from the list. No git change was needed." });
+      }
+      this.close();
       return;
     }
     if (!this.repo) {
@@ -400,8 +463,9 @@ export default class Worktree extends View {
       path: r.top, machine: this.on ?? null, at, state: "queued", error: "",
       main: job.main, force: job.force, spaces: job.spaces, pins: job.pins,
     }]);
-    // A layout without the sidebar has nobody to take the job, so this dialog
-    // stays and runs it. The checkout is hidden either way.
+    // A layout without the sidebar — or with it hidden, where no copy may ever
+    // have started — has nobody to take the job, so this dialog stays and runs
+    // it. The checkout is hidden either way.
     if (!shownBy(layout(), "agents-list")) return cx.spawn(async (cx) => this.workJob(job, cx));
     const queued = shared("worktree.jobs");
     setShared("worktree.jobs", [...(Array.isArray(queued) ? queued : []), job]);
@@ -660,13 +724,15 @@ export default class Worktree extends View {
         : r === undefined
         ? "…"
         : r === null
-          ? `${this.folder ? tilde(this.folder, this.userHome) : "This folder"} is not in a git repository.`
+          ? this.staleCheckout
+            ? "This checkout was already removed outside Herdr. Press Enter to clear its row from the list."
+            : `${this.folder ? tilde(this.folder, this.userHome) : "This folder"} is not in a git repository.`
           : remove
             ? !r.linked
               ? "This is the repository's main checkout, not a worktree."
               : `${closing.length ? `Closes ${spacesNamed(closing)} and deletes` : "Deletes"} ${tilde(r.top, this.userHome)}. The branch stays.${stayingNote}`
             : `A new checkout in ${tilde(ROOT(this.userHome), this.userHome)}/${r.name}/. An existing branch is checked out; a new name starts from here.`;
-    const blocked = Boolean(pinnedSpace) || (!closeSpace && (!r || (remove && !r.linked)));
+    const blocked = Boolean(pinnedSpace) || (!closeSpace && ((!r && !this.staleCheckout) || (remove && r && !r.linked)));
     const warn = remove || Boolean(pinnedSpace);
     return v_flex()
       .id("worktree")
@@ -712,7 +778,7 @@ export default class Worktree extends View {
             .child(keycap(t, "esc")).child(div().text_size(10).text_color(t.dim).child("close"))))
           .when(!this.busy && !blocked, (el) => el.child(h_flex().gap(5).items_center()
             .child(keycap(t, "↵"))
-            .child(div().text_size(10).text_color(t.dim).child(remove || closeSpace ? "remove" : "create"))
+            .child(div().text_size(10).text_color(t.dim).child(this.staleCheckout ? "clear" : remove || closeSpace ? "remove" : "create"))
             .child(keycap(t, "esc"))
             .child(div().text_size(10).text_color(t.dim).child("cancel")))),
       );

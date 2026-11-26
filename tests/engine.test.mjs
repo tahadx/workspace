@@ -172,7 +172,7 @@ const key = (main) => `\u001f${main}`;
   const init = palette.slice(at, end);
   check("opening the sheet asks for no git", !init.includes("askGit") && !init.includes("this.load("), init.slice(0, 80));
   check("the sheet hydrates the shared picture first",
-    /this\.initShared\(\);/.test(init));
+    /this\.initShared\([^)]*\);/.test(init));
   check("a space's checkout comes from the sticky record first",
     /checkoutRecord\(s, ps\) \{\n    const rec = checkoutRecordOf\(s\);\n    if \(rec\) return rec;/.test(src));
   check("worktree identity is the record, not a folder prefix",

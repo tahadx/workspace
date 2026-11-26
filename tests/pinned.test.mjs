@@ -146,7 +146,7 @@ check("the sidebar closes its row through the shared action",
   /closeEntry\(\) \{\s*\n\s*this\.closeRow\(this\.selectedRow\(\)\);/.test(sidebar));
 
 check("the sidebar runs the removal, so it outlives the dialog",
-  /watchJob\(cx\) \{[\s\S]{0,900}setShared\("worktree\.job", null\);[\s\S]{0,1800}this\.runWorktreeJob\(/.test(sidebar));
+  /watchJob\(cx\) \{[\s\S]{0,900}setShared\("worktree\.job", null\);[\s\S]{0,4000}this\.runWorktreeJob\(/.test(sidebar));
 check("a second removal is queued instead of overwriting the first",
   /setShared\("worktree\.jobs", \[\.\.\.\(Array\.isArray\(queued\) \? queued : \[\]\), job\]\)/.test(worktree)
   && /shared\("worktree\.jobs"\)/.test(sidebar));

@@ -92,6 +92,46 @@ check("opening a row on its way out does nothing",
 check("closing a row on its way out does not queue a second removal",
   /if \(this\.removalForRow\(r\)\?\.status === "removing"\) return;\s*\n\s*if \(r\.kind === "agent"\)/.test(core));
 
+// A function declaration, cut out whole: `pick` stops at a top-level semicolon,
+// and `shownBy` has none after its closing brace.
+function fn(src, name) {
+  const at = src.indexOf(`function ${name}(`);
+  if (at < 0) return "";
+  let depth = 0;
+  for (let i = at; i < src.length; i++) {
+    if (src[i] === "{") depth++;
+    else if (src[i] === "}" && --depth === 0) return src.slice(at, i + 1);
+  }
+  return "";
+}
+
+// Handing a removal to a sidebar that is only a hidden block in the tree is
+// what left this checkout "Removing…" forever: the block was there, no copy
+// had ever started, and no one ran the job.
+{
+  const shownBy = new Function(`${fn(worktree, "shownBy")}; return shownBy;`)();
+  const tree = (sidebar = {}) => ({ type: "row", children: [{ id: "sidebar", type: "column", ...sidebar, children: [{ content: { mod: "agents-list" } }] }] });
+  check("a visible sidebar takes a removal", shownBy(tree(), "agents-list"));
+  check("a hidden sidebar does not", !shownBy(tree({ hidden: true }), "agents-list"));
+  check("a hidden ancestor hides the block too",
+    !shownBy({ type: "row", hidden: true, children: [{ content: { mod: "agents-list" } }] }, "agents-list"));
+  const stack = (active) => ({ type: "stack", active, children: [
+    { id: "a", content: { mod: "other" } },
+    { id: "b", children: [{ content: { mod: "agents-list" } }] },
+  ] });
+  check("a stack's unselected child does not take a removal", !shownBy(stack("a"), "agents-list"));
+  check("a stack's selected child does", shownBy(stack("b"), "agents-list"));
+}
+
+// Two attempts for one checkout are one job, the newest, and an entry from a
+// previous session is not run against a checkout made again since.
+check("a checkout queued twice runs once, the newest attempt",
+  /const newest = new Map\(\)/.test(sidebar) && /const latest = new Map\(\)/.test(sidebar)
+  && /if \(!prev \|\| \(item\.at \?\? 0\) > \(prev\.at \?\? 0\)\) newest\.set\(key, item\)/.test(sidebar)
+  && /if \(!prev \|\| \(r\.at \?\? 0\) > \(prev\.at \?\? 0\)\) latest\.set\(key, r\)/.test(sidebar));
+check("a stranded job older than the removal net is not run later",
+  /const since = Date\.now\(\) - 15 \* 60_000;/.test(sidebar) && /\(item\.at \?\? 0\) < since/.test(sidebar));
+
 // The dialog cannot confirm before its warnings are known, and never returns
 // silently: a silent return is what let a removal read as asked when nothing ran.
 check("the dialog asks the person to wait while it checks",

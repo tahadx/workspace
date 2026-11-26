@@ -412,6 +412,37 @@ export const workspace = {
 const STATE_KEY = "workspace.state";
 const asObject = (v) => (v && typeof v === "object" && !Array.isArray(v) ? v : null);
 
+// Checkout paths git no longer has, as { path: at }. A view that starts while
+// the sidebar is hidden has no scanner to refresh the checkout list: without
+// this, a worktree deleted outside Herdr leaves a cached row whose folder is
+// gone, so the removal dialog cannot even name its repo and the row is stuck.
+const GONE_KEY = "workspace.gone";
+export const goneCheckouts = () => {
+  const all = shared(GONE_KEY);
+  if (!all || typeof all !== "object") return new Set();
+  const since = Date.now() - 15 * 60_000;
+  const out = new Set();
+  for (const [path, at] of Object.entries(all)) if ((at ?? 0) > since) out.add(tidyPath(path));
+  return out;
+};
+const markGoneCheckouts = (paths) => {
+  if (!paths.size) return;
+  const all = shared(GONE_KEY);
+  const next = all && typeof all === "object" ? { ...all } : {};
+  for (const p of paths) next[p] = Date.now();
+  setShared(GONE_KEY, next);
+};
+// A checkout made again at a path we marked gone takes its row back.
+const clearGoneMarks = (paths) => {
+  if (!paths.size) return;
+  const all = shared(GONE_KEY);
+  if (!all || typeof all !== "object") return;
+  const next = { ...all };
+  for (const p of paths) delete next[p];
+  setShared(GONE_KEY, next);
+};
+const withoutGone = (list, gone) => Array.isArray(list) ? list.filter((c) => !gone.has(tidyPath(c?.path))) : list;
+
 export function workspaceState() {
   return asObject(shared(STATE_KEY)) ?? {};
 }
@@ -424,15 +455,21 @@ export function hydrateWorkspace() {
   workspace.hydrated = true;
   const state = workspaceState();
   const usable = (key) => typeof key === "string" && key.includes(SEP);
+  const gone = goneCheckouts();
+  const live = new Set(spaces().map((s) => s.id));
   for (const [key, value] of Object.entries(asObject(state.git) ?? {})) {
     if (!usable(key) || key in workspace.git) continue;
+    if (value?.linked && gone.has(tidyPath(value.root))) continue;
     workspace.git[key] = value;
   }
   for (const [key, value] of Object.entries(asObject(state.trees) ?? {})) {
     if (!usable(key) || key in workspace.trees) continue;
-    workspace.trees[key] = value;
+    workspace.trees[key] = withoutGone(value, gone);
   }
-  Object.assign(workspace.spacePins, asObject(state.spaces) ?? {});
+  for (const [id, value] of Object.entries(asObject(state.spaces) ?? {})) {
+    if (value?.isWorktree && gone.has(tidyPath(value.worktreePath)) && !live.has(id)) continue;
+    workspace.spacePins[id] = value;
+  }
   Object.assign(workspace.order, asObject(state.order) ?? {});
   workspace.rev = Math.max(workspace.rev ?? 0, Number(state.rev) || 0);
 }
@@ -452,14 +489,25 @@ export function persistWorkspace(force = false) {
   // corrupt file) cannot be addressed any more. Drop them here as well, so one
   // stale entry cannot ride along forever.
   const clean = (map) => Object.fromEntries(Object.entries(map ?? {}).filter(([key]) => key.includes(SEP)));
+  // A checkout pruned while no sidebar copy was running is gone from the shared
+  // picture. A copy that hydrated before the prune must not write its old rows
+  // back over it.
+  const gone = goneCheckouts();
+  const live = new Set(spaces().map((s) => s.id));
+  const git = Object.fromEntries(Object.entries(clean(workspace.git))
+    .filter(([, value]) => !(value?.linked && gone.has(tidyPath(value.root)))));
+  const trees = Object.fromEntries(Object.entries(clean(workspace.trees))
+    .map(([key, value]) => [key, withoutGone(value, gone)]));
+  const pins = Object.fromEntries(Object.entries(workspace.spacePins ?? {})
+    .filter(([id, value]) => !(value?.isWorktree && gone.has(tidyPath(value.worktreePath)) && !live.has(id))));
   // `at` is when the picture was written, not part of it. Keeping it out of the
   // comparison matters: with it in, every scan looked like a change, so an idle
   // window rewrote shared state (and repainted every mod) once per scan.
   const state = {
     rev: workspace.rev ?? 0,
-    git: clean(workspace.git),
-    trees: clean(workspace.trees),
-    spaces: workspace.spacePins,
+    git,
+    trees,
+    spaces: pins,
     order: workspace.order,
   };
   const json = JSON.stringify(state);
@@ -471,9 +519,12 @@ export function persistWorkspace(force = false) {
   const raw = workspaceState();
   const rawState = {
     rev: workspace.rev ?? 0,
-    git: clean(asObject(raw.git)),
-    trees: clean(asObject(raw.trees)),
-    spaces: asObject(raw.spaces) ?? {},
+    git: Object.fromEntries(Object.entries(clean(asObject(raw.git)))
+      .filter(([, value]) => !(value?.linked && gone.has(tidyPath(value.root))))),
+    trees: Object.fromEntries(Object.entries(clean(asObject(raw.trees)))
+      .map(([key, value]) => [key, withoutGone(value, gone)])),
+    spaces: Object.fromEntries(Object.entries(asObject(raw.spaces) ?? {})
+      .filter(([id, value]) => !(value?.isWorktree && gone.has(tidyPath(value.worktreePath)) && !live.has(id)))),
     order: asObject(raw.order) ?? {},
   };
   const stale = JSON.stringify(rawState) !== json
@@ -484,6 +535,59 @@ export function persistWorkspace(force = false) {
   workspace.saved = json;
   setShared(STATE_KEY, { ...state, at: now });
   return true;
+}
+
+// Checkouts removed by another agent or a terminal (`git worktree remove`)
+// while no sidebar copy is mounted: nothing runs refreshTrees, so the shared
+// list keeps a row for a folder that is gone. The removal dialog cannot name a
+// repo for that folder, which is how the row becomes impossible to remove.
+// Both views start here, so opening the sheet cleans the picture too.
+let pruning = false;
+export async function pruneStaleCheckouts() {
+  if (pruning) return;
+  pruning = true;
+  try {
+    const state = workspaceState();
+    const trees = asObject(state.trees);
+    if (!trees) return;
+    const gone = new Set();
+    const seenPaths = new Set();
+    const next = {};
+    for (const [key, list] of Object.entries(trees)) {
+      if (!Array.isArray(list)) { next[key] = list; continue; }
+      const at = key.indexOf(SEP);
+      const on = at >= 0 ? (key.slice(0, at) || null) : null;
+      const main = at >= 0 ? key.slice(at + 1) : "";
+      // A failed read keeps the list, the same rule the sidebar's scan uses.
+      let fresh = null;
+      if (main) {
+        try { fresh = await readCheckouts({ main }, on); } catch { fresh = null; }
+      }
+      if (fresh == null) { next[key] = list; continue; }
+      const live = new Set(fresh.map((c) => tidyPath(c.path)));
+      for (const p of live) seenPaths.add(p);
+      next[key] = list.filter((c) => live.has(tidyPath(c?.path)));
+      for (const c of list) if (!live.has(tidyPath(c?.path))) gone.add(tidyPath(c?.path));
+    }
+    // A path git lists again (a new worktree at the same place) gets its row back.
+    const marked = goneCheckouts();
+    const back = new Set([...marked].filter((p) => seenPaths.has(p)));
+    clearGoneMarks(back);
+    for (const p of back) gone.delete(p);
+    if (!gone.size && !back.size) return;
+    markGoneCheckouts(gone);
+    for (const [key, list] of Object.entries(next)) workspace.trees[key] = list;
+    for (const [key, value] of Object.entries(workspace.git ?? {})) {
+      if (value?.linked && gone.has(tidyPath(value.root))) delete workspace.git[key];
+    }
+    const liveIds = new Set(spaces().map((s) => s.id));
+    for (const [id, value] of Object.entries(workspace.spacePins ?? {})) {
+      if (!liveIds.has(id) && value?.isWorktree && gone.has(tidyPath(value.worktreePath))) delete workspace.spacePins[id];
+    }
+    // A cached answer from before the checkout went must not put it back.
+    dropGitCache();
+    persistWorkspace(true);
+  } finally { pruning = false; }
 }
 
 // A space's sticky record: { groupKey, main, worktreePath, root, branch,
@@ -1092,11 +1196,14 @@ export class Workspace extends View {
   // Called by both inits. The step state lives on the view, never at module
   // scope: two copies (the sidebar block and the open sheet) must not share one
   // held key.
-  initShared() {
+  initShared(cx) {
     // The picture the other copy has already written: repos, checkouts, sticky
     // worktree records and their order. The sheet's first frame draws from it
     // without running git.
     hydrateWorkspace();
+    // No sidebar copy means no scanner: clean checkouts deleted outside Herdr
+    // here instead of leaving a row whose folder is gone and cannot be removed.
+    if (cx) cx.spawn(async () => { await pruneStaleCheckouts(); });
     this.reorderHold = null;
     this.reorderId = null;
     this.reorderDir = 0;

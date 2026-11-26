@@ -318,7 +318,7 @@ export class Sidebar extends Workspace {
     }
     if (props()?.sortMenu) return;
     // Pins, removals and the step state are the find sheet's too: one copy.
-    this.initShared();
+    this.initShared(cx);
     // The keyboard in the sidebar: Alt+B hands it here and takes it back. The
     // rows it moves through are collected on each render, in the order drawn.
     this.handle = cx.focus_handle();
@@ -1029,13 +1029,24 @@ export class Sidebar extends Workspace {
     if (batch.length) {
       setShared("worktree.job", null);
       setShared("worktree.jobs", null);
+      // One job per checkout, the newest. A retry queued for a checkout whose
+      // older attempt is still listed must not run twice, and a job older than
+      // the removal net is a stranded entry from a previous session, not a
+      // removal to finish now (the checkout may have been made again since).
+      const since = Date.now() - 15 * 60_000;
+      const newest = new Map();
       for (const item of batch) {
-        if (!item) continue;
+        if (!item || (item.at ?? 0) < since) continue;
+        // The path is tidied here, as the watchdog below does, so a trailing
+        // slash cannot make the same checkout look like two jobs.
+        const key = `${item.on ?? ""}\u0000${tidyPath(item.top)}`;
+        const prev = newest.get(key);
+        if (!prev || (item.at ?? 0) > (prev.at ?? 0)) newest.set(key, item);
+      }
+      for (const item of newest.values()) {
         // `at` is Date.now(), so two confirms in one millisecond share it. The
         // checkout path keeps them distinct. A job already taken is not run twice
-        // when a later confirm rewrites the list with both. The path is tidied
-        // here, as the watchdog below does, so a trailing slash cannot make the
-        // same checkout look like two jobs.
+        // when a later confirm rewrites the list with both.
         const id = `${item.at}\u0000${tidyPath(item.top)}`;
         if (this.taken.has(id)) continue;
         this.taken.add(id);
@@ -1046,10 +1057,17 @@ export class Sidebar extends Workspace {
     // A removal the dialog queued but no copy ever took (the panel reloaded, the
     // layout changed, the sheet was used alone) must not leave its row on its way
     // out forever. After a grace, the entry it wrote is enough to run the job
-    // here; an entry already claimed is left alone.
+    // here; an entry already claimed is left alone. As with the batch, only the
+    // newest attempt for a checkout runs.
     const now = Date.now();
+    const latest = new Map();
     for (const r of removingList()) {
       if (r.state === "running" || !r.main) continue;
+      const key = `${r.machine ?? ""}\u0000${tidyPath(r.path)}`;
+      const prev = latest.get(key);
+      if (!prev || (r.at ?? 0) > (prev.at ?? 0)) latest.set(key, r);
+    }
+    for (const r of latest.values()) {
       if (now - (r.at ?? 0) < 4000) continue;
       const id = `${r.at ?? 0}\u0000${tidyPath(r.path)}`;
       if (this.taken.has(id)) continue;

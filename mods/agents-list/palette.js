@@ -31,7 +31,7 @@ export class Palette extends Workspace {
     // Pins and pins-as-places are the sidebar's too: one rule, one bind. This
     // also hydrates the shared picture, so the first frame already knows every
     // repo, checkout and sticky worktree — no git, no localStorage guess.
-    this.initShared();
+    this.initShared(cx);
     this.filter = "";
     this.at = null;
     this.scrollTop = 0;
