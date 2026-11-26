@@ -198,9 +198,12 @@ export class Palette extends Workspace {
       if (sc > -Infinity) results.push({ kind: "worktree", c: w.c, repo: w.repo, on: w.on, score: sc });
     }
     for (const p of pinned) {
-      const live = listed.some((s) => (p.id ? s.id === p.id
+      const live = listed.find((s) => (p.id ? s.id === p.id
         : (s.machine ?? null) === (p.machine ?? null) && norm(s.folder ?? "") === norm(p.folder)));
-      if (live) continue;
+      // A pin whose live space moved into a checkout still names the repo's
+      // place ("reel"), while that space now reads as its branch. Searching the
+      // repo's name must find the pin, or its worktrees have no visible home.
+      if (live && !this.isWorktree?.(live)) continue;
       const sc = best([[p.name, 1], [pinLabel(p), 0.9], [base(p.folder), 0.8], ["pinned", 0.4]]);
       if (sc > -Infinity) results.push({ kind: "pin", id: p.id ?? null, folder: p.folder, machine: p.machine ?? null,
         repo: p.repo ?? null, color: p.color ?? null, name: pinLabel(p), named: Boolean(p.named), score: sc });
@@ -242,6 +245,19 @@ export class Palette extends Workspace {
     // bare rows for the same family read as unrelated places.
     const all = listed;
     const home = (id) => (id ? all.find((s) => s.id === id) ?? null : null);
+    // A matched pin already draws its worktrees and their agents. Remember
+    // them so a separate hit on the checkout or its agent cannot draw the same
+    // family a second time beneath it.
+    const pinOwned = new Set();
+    const pinTrees = new Set();
+    for (const r of results) {
+      if (r.kind !== "pin") continue;
+      const pin = pinned.find((p) => (r.id ? p.id === r.id
+        : (p.machine ?? null) === (r.machine ?? null) && norm(p.folder ?? "") === norm(r.folder ?? ""))) ?? r;
+      const place = this.pinChildren(pin, listed, trees, ps);
+      for (const w of place.spaces) pinOwned.add(w.id);
+      for (const w of place.trees) pinTrees.add(keyOf(w));
+    }
     // A worktree space is its repo's space; that space is the top of the family.
     // A hit inside a worktree climbs the whole way, so a branch is never drawn as
     // a place of its own.
@@ -255,13 +271,17 @@ export class Palette extends Workspace {
       return top;
     };
     for (const r of results) {
-      if (r.kind === "space") tree(rootOf(r.s));
-      else if (r.kind === "agent") {
+      if (r.kind === "space") {
+        if (!pinOwned.has(r.s.id)) tree(rootOf(r.s));
+      } else if (r.kind === "agent") {
         const parent = home(r.a.space);
+        if (parent && pinOwned.has(parent.id)) continue;
         if (parent) tree(rootOf(parent));
         else if (!used.has(r.a.address)) { used.add(r.a.address); out.push(r); }
       } else if (r.kind === "worktree") {
+        if (pinTrees.has(keyOf(r))) continue;
         const parent = home(this.checkoutParent?.get(keyOf(r)));
+        if (parent && pinOwned.has(parent.id)) continue;
         if (parent) tree(rootOf(parent));
         else {
           const key = `w\u0000${keyOf(r)}`;

@@ -72,6 +72,7 @@ function rows(world, q) {
     // The row's name: the sheet reads a worktree's checkout, but this world has
     // none, so the space's own name is what every row shows.
     spaceName(s) { return s.name; },
+    isWorktree(s) { return Boolean(world.worktreeIds?.includes(s.id)); },
     // A pin's place: the test world says what hangs under it.
     pinChildren(_p) { return { spaces: world.pinSpaces ?? [], trees: world.pinTrees ?? [] }; },
   };
@@ -151,6 +152,33 @@ check("search: the agent is the hit, its space is not",
   check("search: the worktrees that came along are not hits",
     out.filter((r) => r.kind === "space").every((r) => r.hit === false),
     JSON.stringify(out.map((r) => [r.kind, r.hit])));
+}
+
+// ---- the pin is still searchable after its space moves into a worktree ------
+{
+  const checkoutSpace = { id: "tr", name: "feat/transcript", folder: "/wt/transcript", machine: null, status: "working" };
+  const agent = { address: "t9", space: "tr", space_name: "feat/transcript", title: "OC | transcript", app: "opencode", status: "working" };
+  const other = { c: { path: "/wt/show", branch: "feat/show", main: false }, repo: { name: "reel" }, on: null };
+  const world = {
+    spaces: [checkoutSpace],
+    agents: [agent],
+    worktrees: [other],
+    pins: [{ id: "r", name: "reel", folder: "/repo", machine: null, named: false, repo: "\u001f/repo" }],
+    worktreeIds: ["tr"],
+    pinSpaces: [checkoutSpace],
+    pinTrees: [other],
+  };
+  const found = rows(world, "reel");
+  check("search: a pinned repo found by name when its live space is a worktree",
+    found[0]?.kind === "pin" && found[0].name === "reel", JSON.stringify(found.map((r) => [r.kind, r.name ?? r.s?.name])));
+  check("search: its worktree space and other checkout come with it",
+    found.some((r) => r.kind === "space" && r.s.id === "tr" && r.depth === 1)
+    && found.some((r) => r.kind === "worktree" && r.c.branch === "feat/show"),
+    JSON.stringify(found.map((r) => [r.kind, r.s?.name ?? r.c?.branch, r.depth])));
+  check("search: the agent is drawn once, under the worktree",
+    found.filter((r) => r.kind === "agent").length === 1
+    && found.find((r) => r.kind === "agent")?.depth === 2,
+    JSON.stringify(found.map((r) => [r.kind, r.depth])));
 }
 
 check("search: a folderless active space still loads the other spaces' worktrees",
