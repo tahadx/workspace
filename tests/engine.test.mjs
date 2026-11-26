@@ -50,7 +50,7 @@ const base = (p) => tidyPath(p).split("/").pop() ?? "";
 
 function engine() {
   const workspace = { spacePins: {}, order: {}, dirty: false };
-  const factory = new Function("workspace", "tidyPath", "base",
+  const factory = new Function("workspace", "tidyPath", "base", "place", "inside", "norm", "panes",
     `const asObject = (v) => (v && typeof v === "object" && !Array.isArray(v) ? v : null);
      ${constant("RANK")}
      ${lift("spaceRecord")}
@@ -62,7 +62,10 @@ function engine() {
      ${lift("machineIndexOf")}
      ${lift("orderedPlaces")}
      return { spaceRecord, noteSpaceRecord, pinSpace, orderOf, orderedPaths, movePathWithin, machineIndexOf, orderedPlaces };`);
-  return { workspace, api: factory(workspace, tidyPath, base) };
+  // The tests pass a pane snapshot explicitly; `place` mirrors the engine rule.
+  const at = (s, ps) => (ps ?? []).find((p) => p.tab === s.tabs?.[0]?.id)?.cwd ?? s.folder ?? null;
+  return { workspace, api: factory(workspace, tidyPath, base, at,
+    new Function("norm", `${constant("inside")}; return inside;`)(norm), norm, () => []) };
 }
 
 const space = { id: "s1", name: "wt", machine: null, folder: "/repo/.herdr/worktrees/repo/feat" };
@@ -206,6 +209,59 @@ const key = (main) => `\u001f${main}`;
     newSpaceFolder([{ ...active, record: { isWorktree: false, main: "/home/me/repo" } }], at(wt)) === null);
   check("no record yet leaves the default alone",
     newSpaceFolder([{ ...active, record: null }], at(wt)) === null);
+}
+
+// ---- a stale checkout record gives the repo back its place ------------------
+{
+  const { api } = engine();
+  const mainSpace = { id: "m", folder: MAIN, tabs: [{ id: "t" }] };
+  const held = { id: "w", folder: WT, tabs: [{ id: "t" }] };
+  const read = { key: key(MAIN), main: MAIN, root: MAIN, branch: "main", linked: false };
+  const ps = [{ tab: "t", terminal: "t7", cwd: MAIN }];
+  // A space made in the main checkout, once recorded as a worktree, is a main
+  // place again — otherwise no space is left to hold that repo's checkouts.
+  api.pinSpace(mainSpace, { key: key(MAIN), main: MAIN, root: WT, branch: "feat", linked: true }, ps);
+  api.pinSpace(mainSpace, read, ps);
+  let rec = api.spaceRecord(mainSpace);
+  check("a space made in the main checkout re-pins when its agent comes back",
+    rec?.isWorktree === false && rec?.worktreePath === null, JSON.stringify(rec));
+  // A real worktree space whose shell wanders out still keeps its checkout.
+  api.pinSpace(held, { key: key(MAIN), main: MAIN, root: WT, branch: "feat", linked: true }, ps);
+  api.pinSpace(held, read, ps);
+  rec = api.spaceRecord(held);
+  check("a worktree space keeps its checkout after cd into the main checkout",
+    rec?.isWorktree === true && rec?.worktreePath === WT && rec?.branch === "feat", JSON.stringify(rec));
+  // An agent that moved to a different worktree re-pins to that one.
+  const other = "/home/me/.herdr/worktrees/repo/fix";
+  api.pinSpace(held, { key: key(MAIN), main: MAIN, root: other, branch: "fix", linked: true },
+    [{ tab: "t", terminal: "t7", cwd: other }]);
+  rec = api.spaceRecord(held);
+  check("moving into another worktree of the same repo re-pins the space",
+    rec?.worktreePath === other && rec?.branch === "fix", JSON.stringify(rec));
+}
+
+// ---- the agent's own folder, from its session or from its label -------------
+{
+  const at = src.indexOf("function agentCwds(");
+  if (at < 0) throw new Error("no function agentCwds");
+  let depth = 0;
+  let end = -1;
+  for (let i = at; i < src.length; i++) {
+    if (src[i] === "{") depth++;
+    else if (src[i] === "}" && --depth === 0) { end = i + 1; break; }
+  }
+  const WT = "/home/me/worktrees/repo/feat";
+  const list = [
+    { address: "t7", title: "OC | Feature work", labels: {} },
+    { address: "t8", title: "Plain shell", labels: { "herdr.cwd": "/home/me/label" } },
+  ];
+  const cwds = new Function("terminals", "tidyPath",
+    `let agentDirs = new Map([["feature work", "${WT}"]]);
+     ${src.slice(at, end)}
+     return agentCwds;`)(() => list, tidyPath);
+  const got = cwds();
+  check("an agent's session folder is the place its terminal is in", got.get("t7") === WT, String(got.get("t7")));
+  check("a published cwd label still moves a terminal", got.get("t8") === "/home/me/label", String(got.get("t8")));
 }
 
 console.log(failures ? `\n${failures} engine check(s) failed` : "all engine checks passed");

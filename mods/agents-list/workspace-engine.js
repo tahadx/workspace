@@ -23,7 +23,7 @@
 // does to a row. What is left in palette.js and sidebar.js is how each one draws
 // and walks its own rows.
 import { View, div } from "gpui-kit";
-import { spaces, panes, agents, run, shared, setShared, notify, keys, openOverlay, exec } from "herdr";
+import { spaces, panes, terminals, agents, run, shared, setShared, notify, keys, openOverlay, exec, home, checking } from "herdr";
 
 // A separator for keys that cross into shared.json. NUL is fine inside this
 // process but Herdr's shared state truncates an object key at NUL (`a\0b` reads
@@ -191,6 +191,66 @@ export function shortcutOf(command) {
   }).join("+");
 }
 
+// A coding agent can move itself into another checkout without its shell
+// following: OpenCode's `session.move` changes the session's folder, not the
+// process's, so `pane.cwd` still names the folder it started in. An agent
+// publishes the folder it moved to as a `herdr.cwd` label on its terminal
+// (`hc label "$HC_TERMINAL_ID" herdr.cwd="$PWD"`). One read per pane snapshot;
+// both views take a space's place from `place()` below, so one label moves the
+// agent in the sidebar and the sheet together.
+// OpenCode's session database is the other source: a move changes the session's
+// directory there, not the terminal's cwd. This covers agents whose TUI was
+// started before the move plugin was installed. Titles are how a terminal is
+// matched to its session ("OC | <title>" is the terminal's title).
+const SESSION_SQL = `import json,sqlite3,sys
+try:
+ c=sqlite3.connect("file:"+sys.argv[1]+"?mode=ro",uri=True,timeout=1)
+ rows=c.execute("select title,directory from session_v2 where directory is not null and title is not null order by time_updated desc limit 600").fetchall()
+ out={}
+ for t,d in rows:
+  k=t.strip().lower()
+  if k and k not in out: out[k]=d
+ print(json.dumps(out))
+except Exception:
+ print("{}")`;
+let agentDirs = new Map();
+let agentDirAt = 0;
+let agentDirTimer = false;
+function refreshAgentDirs(cx) {
+  if (!cx || (typeof checking === "function" && checking())) return;
+  const now = Date.now();
+  if (now - agentDirAt < 4000) return;
+  agentDirAt = now;
+  cx.spawn(async () => {
+    try {
+      const r = await exec("python3", ["-c", SESSION_SQL, `${home()}/.local/share/opencode/opencode.db`], { timeout: 5000 });
+      if (r.code !== 0) return;
+      const raw = JSON.parse(r.stdout ?? "{}");
+      // Keep only the sessions this window actually shows: the shared map must
+      // not carry every session the person ever had.
+      const titles = new Set((typeof terminals === "function" ? terminals() : [])
+        .map((t) => String(t?.title ?? "").replace(/^OC\s*\|\s*/i, "").trim().toLowerCase()).filter(Boolean));
+      const next = new Map(Object.entries(raw).filter(([k, v]) => titles.has(k) && typeof v === "string" && v));
+      if (next.size === agentDirs.size && [...next].every(([k, v]) => agentDirs.get(k) === v)) return;
+      agentDirs = next;
+      setShared("workspace.agentDirs", Object.fromEntries(next));
+    } catch {
+      // No database on this machine, or a locked one: labels still work.
+    }
+  });
+}
+
+function agentCwds() {
+  const out = new Map();
+  if (typeof terminals !== "function") return out;
+  for (const t of terminals()) {
+    const title = String(t?.title ?? "").replace(/^OC\s*\|\s*/i, "").trim().toLowerCase();
+    const at = (title && agentDirs.get(title)) || t?.labels?.["herdr.cwd"];
+    if (at && t.address) out.set(t.address, tidyPath(at));
+  }
+  return out;
+}
+
 // Tab -> the first pane (in list order) that shows it. `panes()` copies the whole
 // list, and one frame asks for a space's folder many times against that one copy.
 const paneAt = new WeakMap();
@@ -198,9 +258,13 @@ function paneIndex(all) {
   const hit = paneAt.get(all);
   if (hit) return hit;
   const byTab = new Map();
+  const cwds = agentCwds();
   let i = 0;
   for (const p of all) {
-    if (p?.tab && p.cwd && !byTab.has(p.tab)) byTab.set(p.tab, { cwd: p.cwd, i });
+    if (p?.tab && !byTab.has(p.tab)) {
+      const cwd = (p.terminal && cwds.get(p.terminal)) || p.cwd;
+      if (cwd) byTab.set(p.tab, { cwd, i });
+    }
     i++;
   }
   paneAt.set(all, byTab);
@@ -625,15 +689,22 @@ export function noteSpaceRecord(s, next) {
 // answer for the space's primary pane: { key, main, root, branch, linked } or
 // null (not a repository, or asleep).
 //
-// A linked read always wins. A main-checkout read of the SAME repo is a shell
-// that `cd`ed out of its worktree: the space is still the worktree's, so the
-// pinned path and branch stay. Only a read of a different repository root
-// re-evaluates the space — that is a different place of work, not a detour.
-export function pinSpace(s, read) {
+// A linked read of a worktree always wins. A main-checkout read of the SAME repo
+// is a shell that `cd`ed out of its worktree: the space is still that checkout's,
+// so the pinned path and branch stay — but only when the space really belongs
+// there (it was made in the checkout, or is standing in it). A space made in the
+// main checkout whose agent moved away and back, or whose label went away, is a
+// main place again: keeping the old checkout would strip the repo of the space
+// its worktrees hang under and orphan every row in the tree.
+export function pinSpace(s, read, ps = panes()) {
   if (!s?.id) return false;
   const prev = spaceRecord(s);
   if (!read) return false;
-  if (prev?.isWorktree && prev.groupKey === read.key) {
+  const at = norm(place(s, ps) ?? s.folder ?? "");
+  const madeInMain = Boolean(s.folder) && inside(norm(s.folder), norm(read.main ?? ""));
+  const movedOn = read.linked && !inside(at, norm(prev?.worktreePath ?? ""));
+  const held = prev?.worktreePath && !madeInMain && !movedOn;
+  if (prev?.isWorktree && prev.groupKey === read.key && held) {
     const branch = tidyPath(read.root) === tidyPath(prev.worktreePath ?? "") ? read.branch : prev.branch;
     return noteSpaceRecord(s, {
       groupKey: prev.groupKey, main: prev.main, worktreePath: prev.worktreePath,
@@ -1204,6 +1275,14 @@ export class Workspace extends View {
     // No sidebar copy means no scanner: clean checkouts deleted outside Herdr
     // here instead of leaving a row whose folder is gone and cannot be removed.
     if (cx) cx.spawn(async () => { await pruneStaleCheckouts(); });
+    // One poller for both views: OpenCode's session folder changes on a move
+    // without a terminal cwd change. The label from the TUI plugin wins when
+    // present; this is the fallback for agents started before it existed.
+    refreshAgentDirs(cx);
+    if (cx && !agentDirTimer) {
+      agentDirTimer = true;
+      cx.timer.every(5000, (cx) => refreshAgentDirs(cx));
+    }
     this.reorderHold = null;
     this.reorderId = null;
     this.reorderDir = 0;

@@ -815,7 +815,7 @@ export class Sidebar extends Workspace {
       // `reel` and used at `~` is at `~`, and must not wear reel's repo tail.
       const read = spaceRead(s, this.git, ps);
       if (read) {
-        if (pinSpace(s, read)) changed = true;
+        if (pinSpace(s, read, ps)) changed = true;
         continue;
       }
       // No repo where the space is now. A worktree keeps its checkout record
@@ -2449,7 +2449,7 @@ export class Sidebar extends Workspace {
     // named keeps its own name, so renames still show.
     const pinOfSpace = (s) => pinsNow.find(({ s: live }) => live?.id === s?.id)?.p ?? null;
     const placeName = (s, sect) => {
-      if (!/pinned$/.test(String(sect))) return this.spaceName(s);
+      if (!/pinned$/.test(String(sect)) || this.isWorktree(s)) return this.spaceName(s);
       const p = pinOfSpace(s);
       return p && !p.named && !s?.named ? pinLabel(p) : this.spaceName(s);
     };

@@ -429,9 +429,21 @@ export class Palette extends Workspace {
             out.push({ kind: "worktree", c: w.c, repo: w.repo, on: w.on, depth: 1 });
             emitted.add(keyOf(w));
           }
-        } else if (!emitted.has(s.id) && !this.isWorktree(s)) {
-          // Its worktrees and agents come with it, the one in use too. A pinned
-          // checkout is not a pin row of its own: its repo's row brings it.
+        } else if (this.isWorktree(s)) {
+          // A pinned place whose live space is a worktree is still the repo's
+          // place: draw the pin and everything it holds, the same row the
+          // sidebar draws. Dropping it left the checkouts hanging with no
+          // parent — the sheet showed no worktree for the repo at all.
+          out.push({ kind: "pin", id: p.id ?? null, folder: p.folder, on: p.machine ?? null, machine: p.machine ?? null,
+            repo: p.repo ?? null, color: p.color ?? null, name: pinLabel(p), named: Boolean(p.named) });
+          const kids = pinKids(p);
+          for (const w of kids.spaces) emit(w, 1);
+          for (const w of kids.trees) {
+            out.push({ kind: "worktree", c: w.c, repo: w.repo, on: w.on, depth: 1 });
+            emitted.add(keyOf(w));
+          }
+        } else if (!emitted.has(s.id)) {
+          // Its worktrees and agents come with it, the one in use too.
           emit(s);
         }
       }
@@ -896,7 +908,11 @@ export class Palette extends Workspace {
         // in the space reports another folder (the reel pin read `~`). A space
         // the person named keeps that name; any other row is the path it is.
         const pin = r.inPins ? this.spacePin(s) : null;
-        const shown = pin && !pin.named && !s.named ? pinLabel(pin) : this.spaceName(s);
+        // A worktree is the checkout, not the repo's place: the pin that holds it
+        // names the repo, so borrowing that label would draw the agent's worktree
+        // as "reel" instead of the branch it is standing in.
+        const shown = this.isWorktree(s) ? this.spaceName(s)
+          : pin && !pin.named && !s.named ? pinLabel(pin) : this.spaceName(s);
         return h_flex().id(`pal-${r.inPins ? "pin-" : ""}${s.id}`).relative().mx(4).pl(10 + (r.depth ?? 0) * 16).pr(10).h(36).rounded(9).gap(9).items_center()
           .when(on, (el) => el.bg(wash(t.accent, "16")))
           .when(!on, (el) => el.hover((x) => x.bg(wash(t.foreground, "0b"))))

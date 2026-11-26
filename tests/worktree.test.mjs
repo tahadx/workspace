@@ -118,6 +118,11 @@ check("opening a checkout goes to the space standing there, even after a cd",
 check("opening a checkout nobody stands in finds no space",
   !openSpaceFor(other, null, [repo, wt], []));
 
+// A pin whose live space moved into a checkout is still the repo's place: if
+// the sheet drops that row its worktrees are drawn with no parent at all.
+check("the sheet keeps a pinned repo whose live space is a worktree",
+  /else if \(this\.isWorktree\(s\)\) \{[\s\S]{0,420}out\.push\(\{ kind: "pin"/.test(palette));
+
 // Both views read the name from the checkout, not from Herdr's live name — and
 // a pinned row from the pin's place, through the same helper.
 check("the sidebar names a row through the shared rule",
@@ -125,8 +130,11 @@ check("the sidebar names a row through the shared rule",
   && /\.child\(label\)/.test(sidebar)
   && /const placeName = \(s, sect\) =>/.test(sidebar));
 check("the sheet names a row through the shared rule",
-  /const shown = pin && !pin\.named && !s\.named \? pinLabel\(pin\) : this\.spaceName\(s\);/.test(palette)
+  /const shown = this\.isWorktree\(s\) \? this\.spaceName\(s\)\s*: pin && !pin\.named && !s\.named \? pinLabel\(pin\) : this\.spaceName\(s\);/.test(palette)
   && /this\.label\(shown/.test(palette) && /this\.avatar\(t, s, Boolean\(r\.inPins\), shown\)/.test(palette));
+check("both views name a worktree after its branch, not its repo's pin",
+  /isWorktree\(s\)\) return this\.spaceName\(s\);/.test(sidebar)
+  && /const shown = this\.isWorktree\(s\) \? this\.spaceName\(s\)/.test(palette));
 check("the sidebar answers with the checkout's branch",
   /worktreeName\(s\) \{[\s\S]{0,260}return c\?\.branch/.test(sidebar));
 check("the sheet answers with the checkout's branch",
