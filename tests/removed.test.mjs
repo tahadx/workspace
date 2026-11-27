@@ -42,8 +42,8 @@ const KEY = `${SEP}/repo`;
 const WT = "/home/me/.herdr/worktrees/repo/feat";
 const rec = { isWorktree: true, groupKey: KEY, worktreePath: WT, main: "/repo", branch: "feat" };
 
-const removedWorktree = new Function("spaceRecord", "tidyPath", "SEP",
-  `return function ${method("removedWorktree")};`)((s) => (s?.id === "s1" ? rec : null), tidyPath, SEP);
+const removedWorktree = new Function("spaceRecord", "tidyPath", "SEP", "goneCheckouts",
+  `return function ${method("removedWorktree")};`)((s) => (s?.id === "s1" ? rec : null), tidyPath, SEP, () => new Set());
 
 const space = { id: "s1", name: "feat", folder: WT, machine: null };
 const ctx = (trees, treesAt) => ({ trees, treesAt });

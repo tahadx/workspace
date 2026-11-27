@@ -39,7 +39,7 @@ function body(src, marker) {
 const pruneBody = body(engine, "export async function pruneStaleCheckouts(");
 const forgetBody = body(dialog, "const forgetCheckout = (path) =>");
 
-function primer(fresh, marked = []) {
+function primer(fresh, marked = [], exists = true) {
   let pruning = false;
   let gone = [];
   let cleared = [];
@@ -49,14 +49,14 @@ function primer(fresh, marked = []) {
   };
   const workspace = {
     trees: JSON.parse(JSON.stringify(state.trees)),
-    git: { [`${SEP}/repo/wt`]: { linked: true, root: "/repo/wt" }, [`${SEP}/repo`]: { linked: false, root: "/repo" } },
+    git: { [`${SEP}/repo/wt`]: { linked: true, root: "/repo/wt", repo: `${SEP}/repo` }, [`${SEP}/repo`]: { linked: false, root: "/repo", repo: `${SEP}/repo` } },
     spacePins: { s1: { isWorktree: true, worktreePath: "/repo/wt" }, s2: { isWorktree: true, worktreePath: "/repo/keep" } },
   };
   const prune = new Function(
-    "pruning", "workspaceState", "asObject", "readCheckouts", "tidyPath", "markGoneCheckouts",
+    "pruning", "workspaceState", "asObject", "readCheckouts", "folderExists", "tidyPath", "markGoneCheckouts",
     "goneCheckouts", "clearGoneMarks", "workspace", "spaces", "dropGitCache", "persistWorkspace", "SEP",
     `return async function pruneStaleCheckouts() {${pruneBody}};`,
-  )(pruning, () => state, asObject, async () => fresh, tidy,
+  )(pruning, () => state, asObject, async () => fresh, async () => exists, tidy,
     (paths) => { gone = [...paths]; }, () => new Set(marked), (paths) => { cleared = [...paths]; },
     workspace, () => [], () => {}, () => { persisted++; }, SEP);
   return { prune, workspace, gone: () => gone, clearedMarks: () => cleared, persisted: () => persisted };
@@ -83,6 +83,17 @@ await recreated.prune();
 check("a checkout made again at the same path clears its gone mark",
   recreated.clearedMarks().join() === "/repo/wt" && recreated.persisted() === 1
   && recreated.workspace.trees[`${SEP}/repo`].length === 2);
+
+const goneRepo = primer([{ path: "/repo/keep" }], [], false);
+await goneRepo.prune();
+check("a whole repo deleted from disk drops all its checkouts",
+  goneRepo.workspace.trees[`${SEP}/repo`].length === 0
+  && goneRepo.gone().includes("/repo/wt") && goneRepo.gone().includes("/repo/keep")
+  && goneRepo.persisted() === 1);
+check("a deleted repo drops its cached git summaries too",
+  Object.keys(goneRepo.workspace.git).length === 0);
+check("a live space still standing in a gone checkout is hidden by the gone mark",
+  /goneCheckouts\(\)\.has\(tidyPath\(rec\.worktreePath\)\)\)\s*return true;/.test(engine));
 
 // ---- the dialog clears a row whose folder is gone --------------------------
 let state = {

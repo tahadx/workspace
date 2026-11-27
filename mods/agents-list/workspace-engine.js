@@ -507,6 +507,17 @@ const clearGoneMarks = (paths) => {
 };
 const withoutGone = (list, gone) => Array.isArray(list) ? list.filter((c) => !gone.has(tidyPath(c?.path))) : list;
 
+// A whole demo or temp repo can be deleted, not just one checkout in it. No git
+// command can answer for a missing main folder, so a failed read alone looks the
+// same as a busy repo; check the folder itself before trusting the cached list.
+async function folderExists(folder, on) {
+  if (!folder) return false;
+  try {
+    const r = await exec("sh", ["-c", 'test -d "$1"', "sh", folder], on ? { on } : {});
+    return r.code === 0;
+  } catch { return null; } // e.g. Windows without sh: let git decide
+}
+
 export function workspaceState() {
   return asObject(shared(STATE_KEY)) ?? {};
 }
@@ -615,6 +626,7 @@ export async function pruneStaleCheckouts() {
     const trees = asObject(state.trees);
     if (!trees) return;
     const gone = new Set();
+    const goneRepos = new Set();
     const seenPaths = new Set();
     const next = {};
     for (const [key, list] of Object.entries(trees)) {
@@ -622,6 +634,14 @@ export async function pruneStaleCheckouts() {
       const at = key.indexOf(SEP);
       const on = at >= 0 ? (key.slice(0, at) || null) : null;
       const main = at >= 0 ? key.slice(at + 1) : "";
+      const exists = await folderExists(main, on);
+      if (exists === false) {
+        // The repo itself is gone: every checkout it had went with it.
+        goneRepos.add(key);
+        next[key] = [];
+        for (const c of list) gone.add(tidyPath(c?.path));
+        continue;
+      }
       // A failed read keeps the list, the same rule the sidebar's scan uses.
       let fresh = null;
       if (main) {
@@ -642,7 +662,7 @@ export async function pruneStaleCheckouts() {
     markGoneCheckouts(gone);
     for (const [key, list] of Object.entries(next)) workspace.trees[key] = list;
     for (const [key, value] of Object.entries(workspace.git ?? {})) {
-      if (value?.linked && gone.has(tidyPath(value.root))) delete workspace.git[key];
+      if ((value?.linked && gone.has(tidyPath(value.root))) || goneRepos.has(value?.repo)) delete workspace.git[key];
     }
     const liveIds = new Set(spaces().map((s) => s.id));
     for (const [id, value] of Object.entries(workspace.spacePins ?? {})) {
@@ -1484,6 +1504,8 @@ export class Workspace extends View {
   removedWorktree(s) {
     const rec = spaceRecord(s);
     if (!rec?.isWorktree || !rec.worktreePath) return false;
+    // A deleted repo cannot answer git, but the path it marked gone is proof.
+    if (goneCheckouts().has(tidyPath(rec.worktreePath))) return true;
     const groupKey = rec.groupKey;
     if (!groupKey || !(groupKey in (this.trees ?? {}))) return false;
     // Only a this-session read can call a path gone. A hydrated list is as old
