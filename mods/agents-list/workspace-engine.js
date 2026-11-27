@@ -193,47 +193,63 @@ export function shortcutOf(command) {
 
 // A coding agent can move itself into another checkout without its shell
 // following: OpenCode's `session.move` changes the session's folder, not the
-// process's, so `pane.cwd` still names the folder it started in. An agent
-// publishes the folder it moved to as a `herdr.cwd` label on its terminal
-// (`hc label "$HC_TERMINAL_ID" herdr.cwd="$PWD"`). One read per pane snapshot;
-// both views take a space's place from `place()` below, so one label moves the
-// agent in the sidebar and the sheet together.
-// OpenCode's session database is the other source: a move changes the session's
-// directory there, not the terminal's cwd. This covers agents whose TUI was
-// started before the move plugin was installed. Titles are how a terminal is
-// matched to its session ("OC | <title>" is the terminal's title).
+// process's, so `pane.cwd` still names the folder it started in. Both views take
+// a space's place from `place()` below, so changing one terminal's folder moves
+// the agent in the sidebar and the sheet together.
+//
+// The session id is the key. OpenCode reports each session as an OSC 7501 record
+// on its terminal (`t.records`, keyed by `ses_...`), and the session database
+// keeps the same id with its current directory. Matching titles instead is not
+// enough: several sessions commonly share one title, and a title can be renamed
+// without the terminal changing. The `herdr.cwd` label a TUI may publish is kept
+// as a fallback for agents that do not use the session database.
 const SESSION_SQL = `import json,sqlite3,sys
 try:
  c=sqlite3.connect("file:"+sys.argv[1]+"?mode=ro",uri=True,timeout=1)
- rows=c.execute("select title,directory from session_v2 where directory is not null and title is not null order by time_updated desc limit 600").fetchall()
- out={}
- for t,d in rows:
-  k=t.strip().lower()
-  if k and k not in out: out[k]=d
- print(json.dumps(out))
+ rows=c.execute("select id,title,directory from session_v2 where directory is not null order by time_updated desc limit 600").fetchall()
+ byId={}; byTitle={}
+ for i,t,d in rows:
+  if not isinstance(d,str) or not d: continue
+  if i and i not in byId: byId[i]=d
+  k=(t or "").strip().lower()
+  if k and k not in byTitle: byTitle[k]=d
+ print(json.dumps({"byId":byId,"byTitle":byTitle}))
 except Exception:
  print("{}")`;
+// Terminal address -> the folder its session is in. Keyed by address, not by
+// title, so two agents with the same title can stand in two different places.
 let agentDirs = new Map();
 let agentDirAt = 0;
 let agentDirTimer = false;
 function refreshAgentDirs(cx) {
   if (!cx || (typeof checking === "function" && checking())) return;
   const now = Date.now();
-  if (now - agentDirAt < 4000) return;
+  if (now - agentDirAt < 1500) return;
   agentDirAt = now;
-  cx.spawn(async () => {
+  cx.spawn(async (cx) => {
     try {
       const r = await exec("python3", ["-c", SESSION_SQL, `${home()}/.local/share/opencode/opencode.db`], { timeout: 5000 });
       if (r.code !== 0) return;
       const raw = JSON.parse(r.stdout ?? "{}");
-      // Keep only the sessions this window actually shows: the shared map must
-      // not carry every session the person ever had.
-      const titles = new Set((typeof terminals === "function" ? terminals() : [])
-        .map((t) => String(t?.title ?? "").replace(/^OC\s*\|\s*/i, "").trim().toLowerCase()).filter(Boolean));
-      const next = new Map(Object.entries(raw).filter(([k, v]) => titles.has(k) && typeof v === "string" && v));
+      const byId = raw.byId ?? {};
+      const byTitle = raw.byTitle ?? {};
+      const next = new Map();
+      // Keep only terminals this window shows: the shared map must not carry
+      // every session the person ever had.
+      for (const t of (typeof terminals === "function" ? terminals() : [])) {
+        if (!t?.address) continue;
+        const id = Object.keys(t.records ?? {}).find((k) => byId[k]);
+        const title = String(t?.title ?? "").replace(/^OC\s*\|\s*/i, "").trim().toLowerCase();
+        const at = (id && byId[id]) || t?.labels?.["herdr.cwd"] || (title && byTitle[title]);
+        if (at) next.set(t.address, tidyPath(at));
+      }
       if (next.size === agentDirs.size && [...next].every(([k, v]) => agentDirs.get(k) === v)) return;
       agentDirs = next;
       setShared("workspace.agentDirs", Object.fromEntries(next));
+      // The folder a space stands in just changed. Ask the one scanner to
+      // re-read git now, rather than on its next eight-second pass: without
+      // this the row keeps its old checkout until a timer happens to fire.
+      askGit(true);
     } catch {
       // No database on this machine, or a locked one: labels still work.
     }
@@ -244,11 +260,27 @@ function agentCwds() {
   const out = new Map();
   if (typeof terminals !== "function") return out;
   for (const t of terminals()) {
-    const title = String(t?.title ?? "").replace(/^OC\s*\|\s*/i, "").trim().toLowerCase();
-    const at = (title && agentDirs.get(title)) || t?.labels?.["herdr.cwd"];
+    const at = (t.address && agentDirs.get(t.address)) || t?.labels?.["herdr.cwd"];
     if (at && t.address) out.set(t.address, tidyPath(at));
   }
   return out;
+}
+
+// A shell that has cd'd into a checkout stands there even when its agent's
+// session folder still names the repo it started in. Letting the session folder
+// win in that case is how a worktree got drawn as an ordinary space, once under
+// its repo and once again in a priority group. The path guess covers a checkout
+// git has not answered for yet; the listed checkouts cover the rest.
+function inCheckout(folder) {
+  const at = tidyPath(folder);
+  if (!at) return false;
+  for (const c of frameCache("checkouts.all", listedCheckouts)) {
+    if (!c.main && tidyPath(c.path) === at) return true;
+  }
+  for (const g of Object.values(workspace.git ?? {})) {
+    if (g?.linked && tidyPath(g.root) === at) return true;
+  }
+  return /(?:^|\/)worktrees?\/[^/]+\/[^/]+\/?$/.test(norm(at));
 }
 
 // Tab -> the first pane (in list order) that shows it. `panes()` copies the whole
@@ -262,7 +294,11 @@ function paneIndex(all) {
   let i = 0;
   for (const p of all) {
     if (p?.tab && !byTab.has(p.tab)) {
-      const cwd = (p.terminal && cwds.get(p.terminal)) || p.cwd;
+      // A session folder moves an agent that stayed in the repo (OpenCode's
+      // `session.move` does not cd the shell). A shell already in a checkout is
+      // not moved back out of it by a stale session record.
+      const session = p.terminal ? cwds.get(p.terminal) : null;
+      const cwd = session && !inCheckout(p.cwd) ? session : (p.cwd || session);
       if (cwd) byTab.set(p.tab, { cwd, i });
     }
     i++;
@@ -1003,7 +1039,7 @@ export function folderColor(folder) {
 // Herdr keeps linked checkouts at <home>/worktrees/<repo>/<branch>, so a space
 // standing there is a worktree even before git has answered for it. The sidebar
 // and the sheet read the same path, so neither can call it a space of its own.
-export const inWorktrees = (folder) => /(?:^|\/)worktrees\/[^/]+\/[^/]+\/?$/.test(norm(folder ?? ""));
+export const inWorktrees = (folder) => /(?:^|\/)worktrees?\/[^/]+\/[^/]+\/?$/.test(norm(folder ?? ""));
 
 // Pinned spaces: the id is what a pin belongs to, the folder is what lets it
 // still open a shell once its space is gone. A pin is never dropped for missing
@@ -1166,12 +1202,26 @@ export function worktreeTree(all, gitOf, trees, ps) {
   // One pane snapshot for the whole tree. `place` copies the pane list out of
   // the host when no snapshot is passed, and this walks every space.
   const at = (s) => place(s, ps);
-  // A space's checkout: the sticky record first (a shell that `cd`ed out of its
-  // worktree is still that checkout's space), then git's answer, then the path
-  // itself — a machine still asleep, or the frame right after a checkout was
-  // made, has no answer yet and must not read as a plain space in the meantime.
+  // A space's checkout: a listed checkout it actually stands in first, then the
+  // sticky record (a shell that `cd`ed out of its worktree is still that
+  // checkout's space), then git's answer, then the path itself. The list has to
+  // outrank a record that still calls the space a main place: an agent's session
+  // folder can lag its shell, and that made a worktree read as an ordinary
+  // space in both views — once under its repo and once in a priority group.
   const checkoutOf = (s) => {
     const rec = spaceRecord(s);
+    // The list is where the row under the repo comes from, so a space standing
+    // in a checkout must be that row, never a space beside it (a checkout
+    // outside `<home>/worktrees/<repo>/` had no other way to be recognised).
+    const known = knownCheckoutAt(onOf(s), [at(s), s.folder]);
+    if (known) {
+      return {
+        main: known.repoMain ? norm(known.repoMain) : null,
+        root: norm(known.path),
+        linked: true,
+        branch: known.branch ?? null,
+      };
+    }
     if (rec) {
       return {
         main: rec.main ? norm(rec.main) : null,
@@ -1184,22 +1234,9 @@ export function worktreeTree(all, gitOf, trees, ps) {
     if (g?.main) {
       return { main: norm(g.main), root: g.root ? norm(g.root) : null, linked: Boolean(g.linked), branch: g.branch ?? null };
     }
-    // A checkout the picture already lists decides before the path guess: that
-    // list is where the row under the repo comes from, so a space standing there
-    // must be that row, never a space beside it (a checkout outside
-    // `<home>/worktrees/<repo>/` had no other way to be recognised).
-    const known = knownCheckoutAt(onOf(s), [at(s), s.folder]);
-    if (known) {
-      return {
-        main: known.repoMain ? norm(known.repoMain) : null,
-        root: norm(known.path),
-        linked: true,
-        branch: known.branch ?? null,
-      };
-    }
     const path = [at(s), s.folder].map(norm)
-      .find((p) => /(?:^|\/)worktrees\/[^/]+\/[^/]+\/?$/.test(p)) ?? norm(at(s) ?? s.folder ?? "");
-    const m = path.match(/(?:^|\/)worktrees\/([^/]+)\/[^/]+\/?$/);
+      .find((p) => /(?:^|\/)worktrees?\/[^/]+\/[^/]+\/?$/.test(p)) ?? norm(at(s) ?? s.folder ?? "");
+    const m = path.match(/(?:^|\/)worktrees?\/([^/]+)\/[^/]+\/?$/);
     return m ? { main: null, root: path, linked: true, branch: null, name: m[1] } : null;
   };
   const checkout = new Map(all.map((s) => [s.id, checkoutOf(s)]));
@@ -1301,7 +1338,7 @@ export class Workspace extends View {
     refreshAgentDirs(cx);
     if (cx && !agentDirTimer) {
       agentDirTimer = true;
-      cx.timer.every(5000, (cx) => refreshAgentDirs(cx));
+      cx.timer.every(1500, (cx) => refreshAgentDirs(cx));
     }
     this.reorderHold = null;
     this.reorderId = null;

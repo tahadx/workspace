@@ -52,8 +52,9 @@ const constant = (name) => {
 
 const norm = (p) => (p ?? "").replace(/\\/g, "/");
 const base = (p) => norm(p).replace(/\/+$/, "").split("/").pop() ?? "";
-const factory = new Function("norm", "base", "shared", "place", "spaceRecord",
-  `${constant("inside")}\n${lift(core, "openSpaceFor")}\n${lift(core, "worktreeTree")}\n
+const factory = new Function("norm", "base", "shared", "place", "spaceRecord", "knownCheckoutAt",
+  `if (typeof knownCheckoutAt !== "function") knownCheckoutAt = () => null;
+   ${constant("inside")}\n${lift(core, "openSpaceFor")}\n${lift(core, "worktreeTree")}\n
    return { openSpaceFor, worktreeTree, inside };`);
 const shared = () => undefined;
 
@@ -64,7 +65,14 @@ const repo = { id: "r", name: "cliamp", folder: "/home/taha/.config/herdr-app", 
 // A worktree whose shell cd'd out: place() says /tmp, its folder says the checkout.
 const wt = { id: "t", name: "tmp", folder: tree, live: "/tmp", machine: null };
 
-const make = (spaces, trees) => factory(norm, base, shared, (s) => (s.live ?? s.folder), () => null).worktreeTree(
+const knownAt = (trees) => (on, folders) => {
+  for (const folder of folders ?? []) {
+    const hit = trees.find((c) => !c.main && (c.on ?? null) === (on ?? null) && norm(c.path) === norm(folder));
+    if (hit) return hit;
+  }
+  return null;
+};
+const make = (spaces, trees, record = () => null) => factory(norm, base, shared, (s) => (s.live ?? s.folder), record, knownAt(trees)).worktreeTree(
   spaces,
   (s) => (s.id === "r"
     ? { main, root: main, linked: false, branch: "main" }
@@ -87,6 +95,18 @@ check("an unopened checkout hangs there too, so the repo's line is whole",
   out.checkoutParents.get(`\u0000${other}`) === "r", JSON.stringify([...out.checkoutParents]));
 check("a checkout that already has a space is not listed a second time",
   !out.checkoutParents.has(`\u0000${tree}`), JSON.stringify([...out.checkoutParents]));
+
+// An agent's session folder can lag its shell. A sticky record that still calls
+// the space a main place must not let the checkout read as an ordinary space —
+// that drew the same worktree twice, once nested and once in a priority group.
+{
+  const stale = (s) => (s.id === "t"
+    ? { groupKey: `\u001f${main}`, main, worktreePath: null, root: main, branch: "main", isWorktree: false }
+    : null);
+  const nested = make([repo, wt], checkouts, stale);
+  check("a worktree space with a stale main record still hangs under its repo",
+    nested.worktrees.has("t") && nested.parents.get("t") === "r", JSON.stringify([...nested.parents]));
+}
 
 // The sidebar's Pinned section draws the same checkouts: a pin whose space has
 // exited must not list a checkout a live worktree space already stands in, or

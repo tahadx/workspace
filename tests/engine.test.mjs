@@ -240,28 +240,76 @@ const key = (main) => `\u001f${main}`;
     rec?.worktreePath === other && rec?.branch === "fix", JSON.stringify(rec));
 }
 
-// ---- the agent's own folder, from its session or from its label -------------
-{
-  const at = src.indexOf("function agentCwds(");
-  if (at < 0) throw new Error("no function agentCwds");
+// ---- the agent's own folder, keyed by terminal, not by a shared title -------
+function body(name) {
+  const at = src.indexOf(`function ${name}(`);
+  if (at < 0) throw new Error(`no function ${name}`);
   let depth = 0;
-  let end = -1;
   for (let i = at; i < src.length; i++) {
     if (src[i] === "{") depth++;
-    else if (src[i] === "}" && --depth === 0) { end = i + 1; break; }
+    else if (src[i] === "}" && --depth === 0) return src.slice(at, i + 1);
   }
+  throw new Error(`unbalanced ${name}`);
+}
+{
   const WT = "/home/me/worktrees/repo/feat";
   const list = [
     { address: "t7", title: "OC | Feature work", labels: {} },
-    { address: "t8", title: "Plain shell", labels: { "herdr.cwd": "/home/me/label" } },
+    { address: "t8", title: "OC | Feature work", labels: { "herdr.cwd": "/home/me/label" } },
+    { address: "t9", title: "Plain shell", labels: {} },
   ];
   const cwds = new Function("terminals", "tidyPath",
-    `let agentDirs = new Map([["feature work", "${WT}"]]);
-     ${src.slice(at, end)}
+    `let agentDirs = new Map([["t7", "${WT}"]]);
+     ${body("agentCwds")}
      return agentCwds;`)(() => list, tidyPath);
   const got = cwds();
   check("an agent's session folder is the place its terminal is in", got.get("t7") === WT, String(got.get("t7")));
-  check("a published cwd label still moves a terminal", got.get("t8") === "/home/me/label", String(got.get("t8")));
+  check("two terminals with one title keep two different folders", got.get("t8") === "/home/me/label", String(got.get("t8")));
+  check("a terminal with no folder uses the pane cwd", got.has("t9") === false, String(got.get("t9")));
+}
+
+// ---- a shell in a checkout is not dragged back by a stale session folder ----
+{
+  const SEP = "\u001f";
+  const MAIN = "/home/me/repo";
+  const WT = "/home/me/repo-feat";
+  const workspace = { git: {} };
+  const listed = [{ path: WT, branch: "feat", main: false, on: null, repoMain: MAIN }];
+  const inCheckout = new Function("tidyPath", "frameCache", "listedCheckouts", "workspace", "norm", "SEP",
+    `${body("inCheckout")}; return inCheckout;`)(tidyPath, (_key, read) => read(), () => listed, workspace, norm, SEP);
+  const paneIndex = new Function("agentCwds", "inCheckout",
+    `const paneAt = new WeakMap();
+     ${body("paneIndex")}
+     return paneIndex;`)(() => new Map([["t7", MAIN]]), inCheckout);
+  const at = paneIndex([{ tab: "tab", terminal: "t7", cwd: WT }]).get("tab").cwd;
+  check("a shell already in a checkout keeps its folder when the session says repo", at === WT, String(at));
+  const moved = paneIndex([{ tab: "tab", terminal: "t7", cwd: MAIN }]).get("tab").cwd;
+  check("a session folder still moves an agent that stayed in the repo", moved === MAIN, String(moved));
+}
+
+// ---- a move is matched by session id and repaints both views ----------------
+{
+  const list = [
+    { address: "t7", title: "OC | Same title", records: { ses_a: { app: "opencode", state: "working" } }, labels: {} },
+    { address: "t8", title: "OC | Same title", records: { ses_b: { app: "opencode", state: "working" } },
+      labels: { "herdr.cwd": "/home/me/label" } },
+  ];
+  const rows = JSON.stringify({
+    byId: { ses_a: "/home/me/wt/a", ses_b: "/home/me/wt/b" },
+    byTitle: { "same title": "/home/me/stale/title" },
+  });
+  let shared = null;
+  let asks = 0;
+  const refresh = new Function("checking", "exec", "home", "tidyPath", "terminals", "setShared", "askGit",
+    `const SESSION_SQL = ""; let agentDirs = new Map(); let agentDirAt = 0;
+     ${body("refreshAgentDirs")}
+     return refreshAgentDirs;`)(() => false, async () => ({ code: 0, stdout: rows }), () => "/home/me", tidyPath,
+      () => list, (k, v) => { shared = v; }, () => { asks++; });
+  let work;
+  refresh({ spawn: (fn) => { work = fn({ spawn: () => {} }); return work; } });
+  await work;
+  check("a moved session is found by its id, not a colliding title", shared?.t7 === "/home/me/wt/a" && shared?.t8 === "/home/me/wt/b", JSON.stringify(shared));
+  check("a change asks the scanner to repaint the sidebar and the sheet", asks === 1, String(asks));
 }
 
 console.log(failures ? `\n${failures} engine check(s) failed` : "all engine checks passed");
