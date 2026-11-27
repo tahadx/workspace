@@ -10,7 +10,7 @@ import {
   tidyPath, spaceColor, worktreeTree, RANK, askGit, listedCheckouts, pictureKey,
   beginPaint, endPaint, frameCache, scoreTerms, termsOf, spaceRecord,
   groupKeyOf, orderedPaths, orderedPlaces, placeCount, placeGroup, groupPlaces, ribbonPins, movePathWithin, machineIndexOf, persistWorkspace,
-  touchWorkspace, SEP,
+  touchWorkspace, agentFolders, SEP,
 } from "./workspace-engine.js";
 
 // A checkout's row while git works on it, and after a failed attempt. The row
@@ -388,6 +388,26 @@ export class Palette extends Workspace {
     const ckids = (id) => this.checkoutsOf(all, id);
     const parentOf = (s) => { const id = this.parent?.get(s.id); return id ? all.find((x) => x.id === id) : null; };
     const emitted = new Set();
+    // An agent whose session moved into a checkout belongs under that checkout
+    // row, not under the space it started in: the space keeps its own place.
+    const folders = agentFolders();
+    const agentCheckout = new Map();
+    for (const a of agentList) {
+      const at = tidyPath(folders.get(a.address) ?? "");
+      const c = at && this.liveTrees().find((w) => !w.c.main && tidyPath(w.c.path) === at);
+      if (c) agentCheckout.set(a.address, keyOf(c));
+    }
+    const worktreeAgents = (w, depth) => {
+      const key = keyOf(w);
+      return agentList.filter((a) => agentCheckout.get(a.address) === key)
+        .map((a) => ({ kind: "agent", a, depth }));
+    };
+    const pushWorktree = (w, depth, seen) => {
+      out.push({ kind: "worktree", c: w.c, repo: w.repo, on: w.on, depth });
+      for (const a of worktreeAgents(w, depth + 1)) out.push(a);
+      seen.add(keyOf(w));
+      emitted.add(keyOf(w));
+    };
     // `seen` is a section's own list: a place walks its tree again under Pinned,
     // so a family drawn twice does not draw the same child twice.
     const emit = (s, depth = 0, seen = emitted) => {
@@ -395,13 +415,13 @@ export class Palette extends Workspace {
       seen.add(s.id);
       emitted.add(s.id);
       // What runs there, so the overview shows agents next to their worktrees.
-      for (const a of agentList) if (a.space === s.id) out.push({ kind: "agent", a, depth: depth + 1 });
+      for (const a of agentList) {
+        if (a.space === s.id && !agentCheckout.has(a.address)) out.push({ kind: "agent", a, depth: depth + 1 });
+      }
       for (const k of kids(s.id)) if (!seen.has(k.id)) emit(k, depth + 1, seen);
       for (const w of ckids(s.id)) {
         if (seen.has(keyOf(w))) continue;
-        out.push({ kind: "worktree", c: w.c, repo: w.repo, on: w.on, depth: depth + 1 });
-        seen.add(keyOf(w));
-        emitted.add(keyOf(w));
+        pushWorktree(w, depth + 1, seen);
       }
     };
     // Pinned spaces get their own section above the rest, with their own trees,
@@ -445,10 +465,7 @@ export class Palette extends Workspace {
             repo: p.repo ?? null, color: p.color ?? null, name: pinLabel(p), named: Boolean(p.named) });
           const kids = pinKids(p);
           for (const w of kids.spaces) emit(w, 1);
-          for (const w of kids.trees) {
-            out.push({ kind: "worktree", c: w.c, repo: w.repo, on: w.on, depth: 1 });
-            emitted.add(keyOf(w));
-          }
+          for (const w of kids.trees) pushWorktree(w, 1, emitted);
         } else if (this.isWorktree(s)) {
           // A pinned place whose live space is a worktree is still the repo's
           // place: draw the pin and everything it holds, the same row the
@@ -458,10 +475,7 @@ export class Palette extends Workspace {
             repo: p.repo ?? null, color: p.color ?? null, name: pinLabel(p), named: Boolean(p.named) });
           const kids = pinKids(p);
           for (const w of kids.spaces) emit(w, 1);
-          for (const w of kids.trees) {
-            out.push({ kind: "worktree", c: w.c, repo: w.repo, on: w.on, depth: 1 });
-            emitted.add(keyOf(w));
-          }
+          for (const w of kids.trees) pushWorktree(w, 1, emitted);
         } else if (!emitted.has(s.id)) {
           // Its worktrees and agents come with it, the one in use too.
           emit(s);
@@ -493,7 +507,7 @@ export class Palette extends Workspace {
     if (homeless.length || orphans.length) {
       head(`Worktrees ${homeless.length + orphans.length}`);
       for (const s of homeless) emit(s, 0, new Set());
-      orphans.forEach((w) => out.push({ kind: "worktree", c: w.c, repo: w.repo, on: w.on, depth: 0 }));
+      orphans.forEach((w) => pushWorktree(w, 0, emitted));
     }
     // The header's number: places to work. A pin whose space closed keeps its
     // row — a click starts a shell there — so it is still a space, and exiting a

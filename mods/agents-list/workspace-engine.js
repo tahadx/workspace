@@ -256,7 +256,12 @@ function refreshAgentDirs(cx) {
   });
 }
 
-function agentCwds() {
+// The folders the agents' sessions are in, by terminal. A space keeps the
+// folder its terminal actually stands in: a session move is where the agent
+// works, not a reason to tear the space out of its original place. The views
+// use these folders to find the checkout the agent moved into, and the scanner
+// uses them to read that repo's worktrees.
+export function agentFolders() {
   const out = new Map();
   if (typeof terminals !== "function") return out;
   for (const t of terminals()) {
@@ -271,7 +276,7 @@ function agentCwds() {
 // win in that case is how a worktree got drawn as an ordinary space, once under
 // its repo and once again in a priority group. The path guess covers a checkout
 // git has not answered for yet; the listed checkouts cover the rest.
-function inCheckout(folder) {
+export function inCheckout(folder) {
   const at = tidyPath(folder);
   if (!at) return false;
   for (const c of frameCache("checkouts.all", listedCheckouts)) {
@@ -290,17 +295,9 @@ function paneIndex(all) {
   const hit = paneAt.get(all);
   if (hit) return hit;
   const byTab = new Map();
-  const cwds = agentCwds();
   let i = 0;
   for (const p of all) {
-    if (p?.tab && !byTab.has(p.tab)) {
-      // A session folder moves an agent that stayed in the repo (OpenCode's
-      // `session.move` does not cd the shell). A shell already in a checkout is
-      // not moved back out of it by a stale session record.
-      const session = p.terminal ? cwds.get(p.terminal) : null;
-      const cwd = session && !inCheckout(p.cwd) ? session : (p.cwd || session);
-      if (cwd) byTab.set(p.tab, { cwd, i });
-    }
+    if (p?.tab && !byTab.has(p.tab) && p.cwd) byTab.set(p.tab, { cwd: p.cwd, i });
     i++;
   }
   paneAt.set(all, byTab);
@@ -759,7 +756,22 @@ export function pinSpace(s, read, ps = panes()) {
   const at = norm(place(s, ps) ?? s.folder ?? "");
   const madeInMain = Boolean(s.folder) && inside(norm(s.folder), norm(read.main ?? ""));
   const movedOn = read.linked && !inside(at, norm(prev?.worktreePath ?? ""));
-  const held = prev?.worktreePath && !madeInMain && !movedOn;
+  // A shell in the repo's main checkout whose agent works in one of its
+  // checkouts has not left a worktree behind: the place stays at the repo and
+  // the checkout is where the agent is drawn. Holding the worktree here is what
+  // made the space vanish and left only the checkout on screen.
+  const mine = new Set();
+  const byTab = new Map((ps ?? []).map((p) => [p.tab, p.terminal]));
+  for (const tab of s.tabs ?? []) if (byTab.get(tab.id)) mine.add(byTab.get(tab.id));
+  const atMain = !read.linked && tidyPath(read.root) === tidyPath(read.main);
+  const folders = agentFolders();
+  const agentInCheckout = atMain && [...mine].some((addr) => {
+    const dir = tidyPath(folders.get(addr) ?? "");
+    if (!dir) return false;
+    const c = listedCheckouts().find((w) => !w.main && tidyPath(w.path) === dir);
+    return Boolean(c) && `${c.on ?? ""}${SEP}${tidyPath(c.repoMain ?? "")}` === read.key;
+  });
+  const held = prev?.worktreePath && !madeInMain && !movedOn && !agentInCheckout;
   if (prev?.isWorktree && prev.groupKey === read.key && held) {
     const branch = tidyPath(read.root) === tidyPath(prev.worktreePath ?? "") ? read.branch : prev.branch;
     return noteSpaceRecord(s, {
@@ -1266,9 +1278,13 @@ export function worktreeTree(all, gitOf, trees, ps) {
   for (const s of all) {
     const c = checkout.get(s.id);
     if (!c?.linked) continue;
-    worktrees.add(s.id);
     const p = holder(c.main, c.main ? base(c.main) : c.name, onOf(s), s);
-    if (p) parents.set(s.id, p.id);
+    // A checkout with no space holding its repo has nowhere to hang. Keep that
+    // space in the places list instead of crashing on a missing parent or
+    // hiding it in a stray Worktrees section.
+    if (!p) continue;
+    worktrees.add(s.id);
+    parents.set(s.id, p.id);
   }
   // Which checkout paths are already spaces, so none is drawn twice.
   // Both views read this set instead of walking every space per checkout.

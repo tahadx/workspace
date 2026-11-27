@@ -50,7 +50,7 @@ const base = (p) => tidyPath(p).split("/").pop() ?? "";
 
 function engine() {
   const workspace = { spacePins: {}, order: {}, dirty: false };
-  const factory = new Function("workspace", "tidyPath", "base", "place", "inside", "norm", "panes",
+  const factory = new Function("workspace", "tidyPath", "base", "place", "inside", "norm", "panes", "agentFolders", "listedCheckouts",
     `const asObject = (v) => (v && typeof v === "object" && !Array.isArray(v) ? v : null);
      ${constant("RANK")}
      ${lift("spaceRecord")}
@@ -65,7 +65,7 @@ function engine() {
   // The tests pass a pane snapshot explicitly; `place` mirrors the engine rule.
   const at = (s, ps) => (ps ?? []).find((p) => p.tab === s.tabs?.[0]?.id)?.cwd ?? s.folder ?? null;
   return { workspace, api: factory(workspace, tidyPath, base, at,
-    new Function("norm", `${constant("inside")}; return inside;`)(norm), norm, () => []) };
+    new Function("norm", `${constant("inside")}; return inside;`)(norm), norm, () => [], () => new Map(), () => []) };
 }
 
 const space = { id: "s1", name: "wt", machine: null, folder: "/repo/.herdr/worktrees/repo/feat" };
@@ -240,6 +240,25 @@ const key = (main) => `\u001f${main}`;
     rec?.worktreePath === other && rec?.branch === "fix", JSON.stringify(rec));
 }
 
+// ---- a space at the repo's main checkout is not its agent's worktree --------
+{
+  const SEP = "\u001f";
+  const MAIN = "/home/me/repo";
+  const WT = "/home/me/repo-feat";
+  const s = { id: "s", folder: "/home/me/start", tabs: [{ id: "t" }] };
+  const prev = { groupKey: SEP + MAIN, main: MAIN, worktreePath: WT, root: WT, branch: "feat", isWorktree: true };
+  const ps = [{ tab: "t", terminal: "t7", cwd: MAIN }];
+  let wrote = null;
+  const pin = new Function("spaceRecord", "noteSpaceRecord", "place", "norm", "tidyPath", "inside", "agentFolders", "listedCheckouts", "SEP", "panes",
+    `${lift("pinSpace")}; return pinSpace;`)(
+    () => prev, (_id, next) => { wrote = next; return true; }, () => MAIN, norm, tidyPath,
+    new Function("norm", `${constant("inside")}; return inside;`)(norm),
+    () => new Map([["t7", WT]]), () => [{ path: WT, main: false, on: null, repoMain: MAIN }], SEP, () => ps);
+  pin(s, { key: SEP + MAIN, main: MAIN, root: MAIN, branch: "main", linked: false }, ps);
+  check("a place whose agent works in a checkout does not become that checkout",
+    wrote?.isWorktree === false && wrote?.root === MAIN, JSON.stringify(wrote));
+}
+
 // ---- the agent's own folder, keyed by terminal, not by a shared title -------
 function body(name) {
   const at = src.indexOf(`function ${name}(`);
@@ -260,31 +279,25 @@ function body(name) {
   ];
   const cwds = new Function("terminals", "tidyPath",
     `let agentDirs = new Map([["t7", "${WT}"]]);
-     ${body("agentCwds")}
-     return agentCwds;`)(() => list, tidyPath);
+     ${body("agentFolders")}
+     return agentFolders;`)(() => list, tidyPath);
   const got = cwds();
   check("an agent's session folder is the place its terminal is in", got.get("t7") === WT, String(got.get("t7")));
   check("two terminals with one title keep two different folders", got.get("t8") === "/home/me/label", String(got.get("t8")));
   check("a terminal with no folder uses the pane cwd", got.has("t9") === false, String(got.get("t9")));
 }
 
-// ---- a shell in a checkout is not dragged back by a stale session folder ----
+// ---- a space keeps the folder its terminal stands in -------------------------
 {
-  const SEP = "\u001f";
-  const MAIN = "/home/me/repo";
   const WT = "/home/me/repo-feat";
-  const workspace = { git: {} };
-  const listed = [{ path: WT, branch: "feat", main: false, on: null, repoMain: MAIN }];
-  const inCheckout = new Function("tidyPath", "frameCache", "listedCheckouts", "workspace", "norm", "SEP",
-    `${body("inCheckout")}; return inCheckout;`)(tidyPath, (_key, read) => read(), () => listed, workspace, norm, SEP);
-  const paneIndex = new Function("agentCwds", "inCheckout",
+  const paneIndex = new Function(
     `const paneAt = new WeakMap();
      ${body("paneIndex")}
-     return paneIndex;`)(() => new Map([["t7", MAIN]]), inCheckout);
-  const at = paneIndex([{ tab: "tab", terminal: "t7", cwd: WT }]).get("tab").cwd;
-  check("a shell already in a checkout keeps its folder when the session says repo", at === WT, String(at));
-  const moved = paneIndex([{ tab: "tab", terminal: "t7", cwd: MAIN }]).get("tab").cwd;
-  check("a session folder still moves an agent that stayed in the repo", moved === MAIN, String(moved));
+     return paneIndex;`)();
+  const at = paneIndex([{ tab: "tab", terminal: "t7", cwd: "/home/me/repo" }]).get("tab").cwd;
+  check("a session move does not tear the space out of its terminal's folder", at === "/home/me/repo", String(at));
+  check("a shell that cd'd into a checkout is where its space stands",
+    paneIndex([{ tab: "tab", terminal: "t7", cwd: WT }]).get("tab").cwd === WT);
 }
 
 // ---- a move is matched by session id and repaints both views ----------------

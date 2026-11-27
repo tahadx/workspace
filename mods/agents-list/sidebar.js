@@ -11,7 +11,7 @@ import {
   onGitRefresh, takeGitAsk, touchWorkspace, listedCheckouts, pictureKey,
   beginPaint, endPaint, frameCache, spaceRecord, pinSpace, persistWorkspace, spaceRead, inside,
   checkoutRecordOf, groupKeyOf, worktreeSiblings, movePathWithin, machineIndexOf,
-  orderedPaths, orderedPlaces, ribbonPins, SEP,
+  orderedPaths, orderedPlaces, ribbonPins, agentFolders, SEP,
 } from "./workspace-engine.js";
 
 // Close a space once. A deleted folder and a removed checkout are noticed by
@@ -732,6 +732,15 @@ export class Sidebar extends Workspace {
         seen.add(key);
         jobs.push({ machine: s.machine ?? null, folder, key });
       }
+    }
+    // An agent's session can move into a checkout of a repo no space stands in.
+    // Read that folder too, so the checkout is listed and the agent can be drawn
+    // under it without moving the space it came from.
+    for (const folder of agentFolders().values()) {
+      const key = `${SEP}${tidyPath(folder)}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      jobs.push({ machine: null, folder, key });
     }
     // A pinned place is still a place: its repo stays read while its space is
     // closed, so its checkouts stay listed — and a space opened there binds at
@@ -2705,8 +2714,22 @@ export class Sidebar extends Workspace {
       // and each space's agents one level in.
       const allSpaces = spaceList.filter((s) => !removed.has(s.id));
       const pinOf = (s) => this.spacePin(s);
+      // Every checkout this panel knows, in the shape the shared tree takes.
+      // The sheet builds its forest from the same list.
+      const trees = listedCheckouts();
       const kidsOf = new Map();
-      for (const a of list) kidsOf.set(a.space, [...(kidsOf.get(a.space) ?? []), a]);
+      const checkoutKids = new Map();
+      const folders = agentFolders();
+      for (const a of list) {
+        // An agent that moved its session into a checkout belongs under that
+        // checkout row, not under the space it started in: the space stays put.
+        const at = tidyPath(folders.get(a.address) ?? "");
+        const c = at && trees.find((w) => !w.main && tidyPath(w.path) === at);
+        if (c) {
+          const key = `ck-${c.on ?? ""}-${tidyPath(c.path)}`;
+          checkoutKids.set(key, [...(checkoutKids.get(key) ?? []), a]);
+        } else kidsOf.set(a.space, [...(kidsOf.get(a.space) ?? []), a]);
+      }
 
       // Git as the default list reads it: repo, branch, ahead/behind, and whether
       // this checkout is a linked worktree. Both the live place and the folder a
@@ -2716,9 +2739,6 @@ export class Sidebar extends Workspace {
       // Forget spaces that closed, so the remembered checkouts cannot pile up.
       const liveIds = new Set(allSpaces.map((s) => s.id));
       for (const id of this.checkoutById.keys()) if (!liveIds.has(id)) this.checkoutById.delete(id);
-      // Every checkout this panel knows, in the shape the shared tree takes.
-      // The sheet builds its forest from the same list.
-      const trees = listedCheckouts();
       // One tree for both views: which space holds each worktree and which holds
       // each checkout nobody has opened. The same spaces and folders keep the
       // tree from the frame before, so a status tick does not rebuild it.
@@ -3060,6 +3080,19 @@ export class Sidebar extends Workspace {
           .when(Boolean(removal), (el) => el.child(div().flex_1()).child(removalTag(t, removal)));
       };
 
+      // A checkout row carries the agents whose sessions moved into it. They
+      // are no longer children of the space they started in, so the row they
+      // belong to is where their keyboard order and their status are drawn.
+      const withCheckoutKids = (s, c) => {
+        const key = `ck-${c.on ?? ""}-${tidyPath(c.path)}`;
+        const mine = [{ key, kind: "checkout", path: c.path, machine: s.machine ?? null, at: 0 }, checkoutRow(s, c)];
+        const kids = checkoutKids.get(key) ?? [];
+        return [mine, ...kids.flatMap((a, i) => {
+          order.push(a.address);
+          return withKids(a, i, 1);
+        })];
+      };
+
       // A pin whose space is gone is still a place to open, exactly as the sheet
       // draws it. Leaving it out here made the two views disagree about how many
       // pins there are.
@@ -3119,8 +3152,10 @@ export class Sidebar extends Workspace {
         });
         if (depth === 0) for (const w of worktreesOf(s)) emitSpace(w, 1, sect);
         if (depth === 0) for (const c of checkoutsOf(s)) {
-          out.push(checkoutRow(s, c));
-          this.entries.push({ key: `ck-${s.machine ?? ""}-${c.path}`, kind: "checkout", path: c.path, machine: s.machine ?? null, at: out.length - 1 });
+          for (const [entry, el] of withCheckoutKids(s, c)) {
+            out.push(el);
+            this.entries.push({ ...entry, at: out.length - 1 });
+          }
         }
       };
 
@@ -3322,8 +3357,10 @@ export class Sidebar extends Workspace {
                 drawnPinWorktrees.add(w.id);
               }
               for (const c of pinCheckouts(p)) {
-                out.push(checkoutRow({ machine: p.machine ?? null }, c));
-                this.entries.push({ key: `ck-${p.machine ?? ""}-${c.path}`, kind: "checkout", path: c.path, machine: p.machine ?? null, at: out.length - 1 });
+                for (const [entry, el] of withCheckoutKids({ machine: p.machine ?? null }, c)) {
+                  out.push(el);
+                  this.entries.push({ ...entry, at: out.length - 1 });
+                }
                 drawnPinCheckouts.add(`${p.machine ?? ""}${SEP}${tidyPath(c.path)}`);
               }
             }
@@ -3352,8 +3389,10 @@ export class Sidebar extends Workspace {
           if (!this.folded.has(id)) {
             for (const s of homeless) emitSpace(s, 0, id);
             for (const c of orphans) {
-              out.push(checkoutRow({ machine: m }, c));
-              this.entries.push({ key: `ck-${m ?? ""}-${c.path}`, kind: "checkout", path: c.path, machine: m ?? null, at: out.length - 1 });
+              for (const [entry, el] of withCheckoutKids({ machine: m }, c)) {
+                out.push(el);
+                this.entries.push({ ...entry, at: out.length - 1 });
+              }
             }
           }
         }
