@@ -267,6 +267,9 @@ and offers to make one.
 - `Ctrl+Shift+M` flips the whole sidebar to the other side (the layout's two root
   children swap, and with them the panel and the terminal pane); `Ctrl+Shift+D`
   opens the new-worktree dialog for the space you are in.
+- `Ctrl+Shift+O` / `Ctrl+Shift+E` (and the `Alt+Enter` pair) split from the
+  focused agent's session folder: an agent that moved into a worktree gets its
+  new pane there, not in the main checkout its shell still reports.
 - Those keys, and `Ctrl+Shift+X` / `Ctrl+Shift+W`, are `command-bar.*` commands.
   The command bar is mounted in every sidebar mode: it runs the walk itself and
   relays the sidebar-only commands to the sidebar copy, so they still work when

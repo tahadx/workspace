@@ -48,6 +48,10 @@ themselves, only while they hold the keyboard, so they never shadow a terminal.
 | `alt-shift-l` | Swap the pane with the one to the right |
 | `ctrl-shift-o` / `alt-shift-enter` | Split the pane to the right |
 | `ctrl-shift-e` / `alt-enter` | Split the pane down |
+
+The split opens in the folder the focused agent's session is working in. An agent can move
+its session into a worktree while its shell stays in the repo's main checkout; the new
+pane follows the worktree, not the shell.
 | `ctrl-shift-x` / `alt-escape` | Close the pane |
 | `ctrl-shift-z` | Zoom the pane, or all of them again |
 
@@ -238,9 +242,11 @@ your other sections and merges this layout's. The three sections are `global`,
     "alt-shift-up": "agent.prev",
     "alt-shift-down": "agent.next",
     "alt-f": "mod.open:agents-list",
-    "alt-enter": "pane.split:down",
-    "alt-shift-enter": "pane.split:right",
+    "alt-enter": "command-bar.split_down",
+    "alt-shift-enter": "command-bar.split_right",
     "alt-escape": "pane.close",
+    "ctrl-shift-o": "command-bar.split_right",
+    "ctrl-shift-e": "command-bar.split_down",
     "ctrl-j": "command-bar.dir_down",
     "ctrl-k": "command-bar.dir_up",
     "ctrl-shift-x": "command-bar.close_pane",

@@ -3111,9 +3111,13 @@ export class Sidebar extends Workspace {
         const key = `ck-${c.on ?? ""}-${tidyPath(c.path)}`;
         const mine = [{ key, kind: "checkout", path: c.path, machine: s.machine ?? null, at: 0 }, checkoutRow(s, c)];
         const kids = checkoutKids.get(key) ?? [];
+        // The checkout row itself is one level in (pl 36). Its agents are its
+        // children, so they take the next level (nest 2): at nest 1 they sat at
+        // the same indent as the checkout and read as rows at the bottom of the
+        // repo, not as the worktree's own.
         return [mine, ...kids.flatMap((a, i) => {
           order.push(a.address);
-          return withKids(a, i, 1);
+          return withKids(a, i, 2);
         })];
       };
 

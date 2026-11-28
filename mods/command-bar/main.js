@@ -96,6 +96,21 @@ function closeFocused(name) {
   run("tab.close", { id: tabId });
 }
 
+// A split follows the agent, not its shell. An agent can move its session into
+// a worktree while the shell stays in the repo's main checkout, so `pane.split`
+// would open the new terminal in main. `terminal.open` with the session folder
+// opens it in the worktree the agent is actually working in.
+function split(direction) {
+  const f = focused();
+  const dirs = shared("workspace.agentDirs") ?? {};
+  const clean = (p) => String(p ?? "").replace(/\\/g, "/").replace(/\/+$/, "");
+  const there = f?.terminal ? clean(dirs[f.terminal]) : "";
+  if (there && there !== clean(f?.cwd)) {
+    return run("terminal.open", { folder: there, place: direction });
+  }
+  run("pane.split", { direction });
+}
+
 // The sidebar's layout flip, with the same remembered panel width.
 function flipLayout() {
   const tree = JSON.parse(JSON.stringify(layout() ?? {}));
@@ -162,6 +177,7 @@ export default class CommandBar extends View {
           }
           if (c === "dir_down" || c === "dir_up") walk(c === "dir_down" ? "down" : "up");
           else if (c === "close_pane" || c === "close_tab") closeFocused(c);
+          else if (c === "split_right" || c === "split_down") split(c === "split_right" ? "right" : "down");
           else if (c === "flip_layout") flipLayout();
           else if (RELAYED.has(c)) {
             const n = relay(c);

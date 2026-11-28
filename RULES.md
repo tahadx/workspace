@@ -102,7 +102,8 @@ Terminology used in this file:
 - Placement follows where the agent is **active**:
   - working on the repo's main checkout → under the space, **above that space's
     worktrees**;
-  - working in a checkout → under **that worktree**;
+  - working in a checkout → under **that worktree**, indented as its child (never appended
+    after it at the checkout's own level);
   - never both, never duplicated, never left on the old place.
 - **Follow moves automatically.** When an agent's space/cwd moves to another worktree —
   including one it just created — both views move its row at once: the new place shows it,
@@ -110,6 +111,10 @@ Terminology used in this file:
   by hand, and must not see it in two places in between.
 - This is a watcher/live-data concern, not a refresh button. The sheet and sidebar read the
   same resolved picture.
+- **A split follows the agent, not its shell.** `Ctrl+Shift+O` / `Ctrl+Shift+E` (and
+  `Alt+Shift+Enter` / `Alt+Enter`) open the new pane in the folder the agent's session
+  moved to, never in the main checkout its shell still sits in. If the shell is already
+  there, the split is a normal split.
 
 ## 8. Add, remove, rename
 
@@ -211,5 +216,5 @@ herdr-app check mods/worktrees
 ```
 
 The tests named `search`, `count`, `pins`, `pinned`, `reorder`, `removed`, `pending`,
-`sessions`, `worktree` and `stale-worktree` guard the rules above. If a rule here has no
-test, add one before changing the behaviour.
+`sessions`, `split`, `children`, `worktree` and `stale-worktree` guard the rules above. If a rule here
+has no test, add one before changing the behaviour.
