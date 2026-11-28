@@ -19,8 +19,9 @@ if [ ! -d "$home" ]; then
 fi
 
 # The nine mods of this bundle, by name: copying mods/ wholesale would take
-# Herdr's own mods (and its scratch files) along with it.
-BUNDLE="agents-list terminals-list footer icons shortcuts worktrees sidebar-menu pane-header hoverfocus"
+# Herdr's own mods (and its scratch files) along with it. Every mod the layout
+# names must be here: a missing one leaves an empty block on a fresh install.
+BUNDLE="agents-list terminals-list footer icons shortcuts worktrees sidebar-menu command-bar glass-pane"
 
 mkdir -p "$home/layouts" "$home/mods" "$home/themes"
 cp "$here/layouts/workspace.json" "$home/layouts/"

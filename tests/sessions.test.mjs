@@ -60,6 +60,24 @@ const kept = (list, all) => dedupeSessions(list, all).map((a) => a.address);
   check("a pinned view is kept over a newer one", JSON.stringify(kept(list, all)) === '["pinned"]', JSON.stringify(kept(list, all)));
 }
 
+// ---- no record at all: the same app, title and folder is still one row ------
+{
+  const list = [agent({ address: "old", seq: 15, app: "opencode" }), agent({ address: "new", seq: 17, app: "opencode" })];
+  const at = (address) => ({ address, labels: { "herdr.cwd": "/repo/wt" } });
+  const all = [at("old"), at("new")];
+  check("two views of a session with no record are one row",
+    JSON.stringify(kept(list, all)) === '["new"]', JSON.stringify(kept(list, all)));
+}
+{
+  const list = [agent({ address: "here", seq: 15, app: "opencode" }), agent({ address: "there", seq: 17, app: "opencode" })];
+  const all = [
+    { address: "here", labels: { "herdr.cwd": "/repo/wt" } },
+    { address: "there", labels: { "herdr.cwd": "/repo/other" } },
+  ];
+  check("the same title in another folder stays a second agent",
+    JSON.stringify(kept(list, all)) === '["here","there"]', JSON.stringify(kept(list, all)));
+}
+
 // ---- nothing is hidden on a guess -------------------------------------------
 {
   const list = [agent({ address: "a", seq: 15 }), agent({ address: "b", seq: 17 })];

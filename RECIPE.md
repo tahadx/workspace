@@ -253,8 +253,8 @@ and offers to make one.
 **In the panes**
 
 - Move the pointer onto a terminal: it takes the keyboard (`pane.focus`), no
-  click. The `hoverfocus` header stays transparent, so the pane looks the same;
-  the sidebar's agent and terminal rows remain click-only.
+  click. The pane header stays out of the way until the pointer finds it; the
+  sidebar's agent and terminal rows remain click-only.
 
 **Keys this layout adds** (see the table in `docs/bindings.md`)
 
@@ -353,20 +353,21 @@ The layout, `layouts/workspace.json` (a clone of Herdr's `main`, 0.1.14):
 
 ```
 row root                     background canvas · theme {light,dark: omarchy}
-                             terminal_padding [14,12] · titlebar none
+                             terminal_padding [16,14] · titlebar none
                              traffic_lights [12,16]
 ├─ column sidebar            223 px · min 44 · max 480 · background chrome ·
 │  │                         resizable false
 │  ├─ column sidebar-lists
 │  │  ├─ block agents        mod agents-list · props {sidebar:true} ·
-│  │  │                      weight 2.146 · min 90
-│  │  └─ block terminals     mod terminals-list · weight 0.854 · min 90
+│  │  │                      weight 2.246 · min 90
+│  │  └─ block terminals     mod terminals-list · weight 0.754 · min 90
 │  └─ block sidebar-footer   mod footer · 32 px · window_drag
 └─ column work               resizable false
+   ├─ block command-bar      mod command-bar · 40 px · window_drag
    └─ row work-body          padding 8 · gap 8
-      ├─ block main          tab active · pane {radius 10, gap 8, border 1,
+      ├─ block main          tab active · pane {radius 12, gap 8, border 1,
       │                      focus accent, background, lone true,
-      │                      header hoverfocus 5000 hover}
+      │                      header glass-pane 5000 hover}
       └─ column panel        368 px · min 280 · max 900 · hidden
          └─ stack panel-body active files
             ├─ block files   mod files (Herdr's)
@@ -384,8 +385,8 @@ Mods, all `"place": "none"` (the layout decides where they draw):
 | `shortcuts` | overlay | The keys sheet. `keys()`, `commands()`. |
 | `worktrees` | `{space?, folder?, machine?, action}` or `{agent}` | Dialogs: new, open, remove worktree; remove a space; stop an agent. Runs `git worktree list/add/remove` with `exec`, `spaces()`, `space.new/close`, `terminal.kill`; finds `$HOME` with `sh -c 'printf %s "$HOME"'` (PowerShell on Windows). |
 | `sidebar-menu` | overlay | The sidebar's right-click menu. `layout()`, `layout.set` (flip), `layout.resize` (collapse/expand), `keys()` for the hints. |
-| `pane-header` | — | Optional pane header (program, folder, working/needs-you/done, split, zoom, close). Not used by this layout. |
-| `hoverfocus` | — | The transparent pane header this layout uses: on pointer entry it runs `pane.focus` for its `props().pane` when the window is active, so terminals follow the mouse. Renders nothing for mod panes. |
+| `command-bar` | — | The 40 px bar: current space, the search pill (opens `agents-list`), agent counts, the three sidebar modes, palette and new-space buttons. Drags the window. Owns the layout keys while the sidebar is hidden and relays the sidebar-only ones; a key pressed before the panel has ever started opens it and is sent again. |
+| `glass-pane` | — | The pane header: a 30 px strip inside a pane-height transparent layer — program, folder, state, split, zoom, close. The layer runs `pane.focus` on pointer entry, so terminals follow the mouse; mod panes render nothing. |
 
 The keys are the repository's `keys.json`: `install.sh` updates its
 `layout:workspace` section in the person's file and adds its `global` and
@@ -400,9 +401,12 @@ Art: every icon is an SVG in each mod's folder, drawn with `svg()` so it takes
 the theme's colour; program marks come from the app's program table (`icons/`).
 No images, no fonts of our own.
 
-Settings the look assumes: `font_size: 16`, `ui_font: "Geist"`,
-`font_ligatures: false`, and `themes/omarchy.json` (background `#0c0b0c`,
-foreground `#c1c1c1`, selection `#333333`, accent/solid `#8a9a7b`).
+Settings the look assumes (the layout leaves them unset, so the Settings screen
+is the one owner): `font: "JetBrains Mono"`, `font_size: 16`, `ui_font: "Geist"`,
+`font_ligatures: false`, `terminal_line_height: 1.15`, and
+`themes/omarchy.json` — the palette Omarchy writes for the current theme
+(background, foreground, selection and the 16 ANSI colours). It is generated,
+so read the file, never a copy of its hex values.
 
 ## Watch out
 

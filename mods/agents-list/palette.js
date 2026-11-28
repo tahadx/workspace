@@ -1,16 +1,16 @@
 // Spaces, worktrees and agents in one keyboard-driven search sheet.
 // Opened with Alt+F (mod.open:agents-list). Type to filter, ↑/↓, Enter,
 // Esc; Ctrl+R rename, Ctrl+D close, Ctrl+Shift+J/K move the highlighted space.
-import { div, svg, image } from "gpui-kit";
+import { div, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { spaces, agents, panes, run, closeOverlay, props, theme, settings, shared, setShared } from "herdr";
 import {
-  Workspace, MARK, wash, tileOf, inkOf, marks, keycap, shortcutOf, place,
+  Workspace, MARK, wash, marks, keycap, shortcutOf, place,
   pinnedList, pinnedRepo, removalOf, removingList, folderColor, pinLabel, norm, base,
   tidyPath, spaceColor, worktreeTree, RANK, askGit, listedCheckouts, pictureKey,
   beginPaint, endPaint, frameCache, scoreTerms, termsOf, spaceRecord,
   groupKeyOf, orderedPaths, orderedPlaces, placeCount, placeGroup, groupPlaces, ribbonPins, movePathWithin, machineIndexOf, persistWorkspace,
-  touchWorkspace, agentFolders, dedupeSessions, SEP,
+  touchWorkspace, agentFolders, dedupeSessions, SEP, programTile,
 } from "./workspace-engine.js";
 
 // A checkout's row while git works on it, and after a failed attempt. The row
@@ -218,30 +218,39 @@ export class Palette extends Workspace {
     // A matched space brings its agents and worktrees with it, so a search reads
     // like the overview tree instead of one bare row per hit. A row already
     // shown under its space is not repeated further down.
+    // The same home rule as the overview: an agent whose session moved into a
+    // checkout hangs under that checkout in a search too, not under its space.
+    const homes = this.agentHomes(listed, listedAgents, ps);
     const agentsOf = new Map();
     for (const a of listedAgents) {
-      if (!agentsOf.has(a.space)) agentsOf.set(a.space, []);
-      agentsOf.get(a.space).push(a);
+      const at = homes.get(a.address) ?? (a.space ? `space\u0000${a.space}` : null);
+      if (!at) continue;
+      if (!agentsOf.has(at)) agentsOf.set(at, []);
+      agentsOf.get(at).push(a);
     }
     const kids = (id) => this.kidsOf(all, id);
     const ckids = (id) => this.checkoutsOf(all, id, trees);
     const used = new Set();
     const out = [];
+    const emitAgents = (at, depth) => {
+      for (const a of agentsOf.get(at) ?? []) {
+        if (used.has(a.address)) continue;
+        used.add(a.address);
+        out.push({ kind: "agent", a, depth });
+      }
+    };
     const tree = (s, depth = 0) => {
       if (used.has(s.id)) return;
       used.add(s.id);
       out.push({ kind: "space", s, depth });
-      for (const a of agentsOf.get(s.id) ?? []) {
-        if (used.has(a.address)) continue;
-        used.add(a.address);
-        out.push({ kind: "agent", a, depth: depth + 1 });
-      }
+      emitAgents(`space\u0000${s.id}`, depth + 1);
       for (const k of kids(s.id)) tree(k, depth + 1);
       for (const w of ckids(s.id)) {
         const key = `w\u0000${keyOf(w)}`;
         if (used.has(key)) continue;
         used.add(key);
         out.push({ kind: "worktree", c: w.c, repo: w.repo, on: w.on, depth: depth + 1 });
+        emitAgents(keyOf(w), depth + 2);
       }
     };
     // A hit is shown with what it belongs to: a branch with the space that holds
@@ -307,6 +316,7 @@ export class Palette extends Workspace {
           if (used.has(k)) continue;
           used.add(k);
           out.push({ kind: "worktree", c: w.c, repo: w.repo, on: w.on, depth: 1 });
+          emitAgents(keyOf(w), 2);
         }
       } else out.push(r);
     }
@@ -371,6 +381,31 @@ export class Palette extends Workspace {
     return { spaces: spacesNow, trees: treesNow };
   }
 
+  // Where each agent's row hangs: its space, or the checkout its session moved
+  // into (`space\0<id>` when a space stands in that checkout). One rule for the
+  // overview and the search, so typing a query cannot move an agent.
+  agentHomes(all, agentList, ps = this.paneSnap) {
+    // Every checkout the picture lists, including one already open as a space:
+    // `liveTrees()` drops those, and an agent that moved into an open checkout
+    // then stayed on its old space in this view only.
+    const trees = listedCheckouts();
+    const folders = agentFolders();
+    const atCheckout = new Map();
+    for (const s of all) {
+      const root = this.checkoutRecord(s, ps)?.root;
+      if (root) atCheckout.set(`${s.machine ?? ""}\u0000${tidyPath(root)}`, s.id);
+    }
+    const homes = new Map();
+    for (const a of agentList) {
+      const at = tidyPath(folders.get(a.address) ?? "");
+      const c = at && trees.find((w) => !w.main && tidyPath(w.path) === at);
+      if (!c) continue;
+      const holder = atCheckout.get(`${c.on ?? ""}\u0000${tidyPath(c.path)}`);
+      homes.set(a.address, holder ? `space\u0000${holder}` : `${c.on ?? ""}\u0000${c.path}`);
+    }
+    return homes;
+  }
+
   rows() {
     // The same forest the sidebar draws, before the filter or the sections, so
     // a search and the overview cannot disagree about who holds a checkout.
@@ -394,23 +429,7 @@ export class Palette extends Workspace {
     const emitted = new Set();
     // An agent whose session moved into a checkout belongs under that checkout
     // row, not under the space it started in: the space keeps its own place.
-    const folders = agentFolders();
-    const agentCheckout = new Map();
-    // A checkout a space stands in is that space's row here too, so an agent
-    // that moved into it is drawn under the worktree, not under a checkout row
-    // nobody opens.
-    const atCheckout = new Map();
-    for (const s of all) {
-      const root = this.checkoutRecord(s, ps)?.root;
-      if (root) atCheckout.set(`${s.machine ?? ""}\u0000${tidyPath(root)}`, s.id);
-    }
-    for (const a of agentList) {
-      const at = tidyPath(folders.get(a.address) ?? "");
-      const c = at && this.liveTrees().find((w) => !w.c.main && tidyPath(w.c.path) === at);
-      if (!c) continue;
-      const holder = atCheckout.get(`${c.on ?? ""}\u0000${tidyPath(c.path)}`);
-      agentCheckout.set(a.address, holder ? `space\u0000${holder}` : keyOf(c));
-    }
+    const agentCheckout = this.agentHomes(all, agentList, ps);
     const worktreeAgents = (w, depth) => {
       const key = keyOf(w);
       return agentList.filter((a) => agentCheckout.get(a.address) === key)
@@ -551,7 +570,7 @@ export class Palette extends Workspace {
     if (r.kind === "space") return { kind: "space", s: r.s };
     if (r.kind === "agent") return { kind: "agent", a: r.a };
     if (r.kind === "worktree") return { kind: "checkout", path: r.c.path, on: r.on ?? null, c: r.c };
-    if (r.kind === "pin") return { kind: "pin", pin: { id: r.id ?? null, folder: r.folder, machine: r.on ?? null, name: r.name, named: r.named } };
+    if (r.kind === "pin") return { kind: "pin", pin: { id: r.id ?? null, folder: r.folder, machine: r.machine ?? r.on ?? null, name: r.name, named: r.named } };
     return null;
   }
 
@@ -733,7 +752,7 @@ export class Palette extends Workspace {
   // the sheet says it continues.
   wheel(e, cx) {
     if (!(this.maxScroll > 0)) return;
-    const next = Math.max(0, Math.min(this.scrollTop - e.delta.y, this.maxScroll));
+    const next = Math.max(0, Math.min(this.scrollTop - e.delta.y / (settings().zoom || 1), this.maxScroll));
     if (next === this.scrollTop) return;
     this.scrollTop = next;
     // The wheel is the pointer's way of choosing, like the arrows: a space just
@@ -754,7 +773,7 @@ export class Palette extends Workspace {
   overRow(e, cx) {
     if (this.pressed === null) return;
     const v = this.geom;
-    const y = (e.local_position?.y ?? 0) + this.scrollTop;
+    const y = (e.local_position?.y ?? 0) / (settings().zoom || 1) + this.scrollTop;
     let hit = null;
     if (v) for (let i = 0; i < v.rows.length; i++) {
       const h = v.H[v.rows[i].kind] ?? 32;
@@ -844,7 +863,7 @@ export class Palette extends Workspace {
       const created = shared("worktree.created");
       if (createdAt && typeof created === "string") {
         this.followCreated = created;
-        this.noteCreated(created, createdAt);
+        this.noteCreated(created, createdAt, shared("worktree.createdOn") ?? null);
         this.load(cx);
       }
     }
@@ -1036,7 +1055,7 @@ export class Palette extends Workspace {
           .child(div().flex_1().min_w(0).truncate().text_size(12.5).text_color(t.muted).child(r.name))
           // No folder: where a shell starts is Herdr's bookkeeping, and a pin is
           // read by its name. Only another machine is worth saying out loud.
-          .when(Boolean(r.on), (el) => el.child(div().flex_none().max_w(90).truncate().text_size(9.5).text_color(wash(t.muted, "cc")).child(r.on)))
+          .when(Boolean(r.machine ?? r.on), (el) => el.child(div().flex_none().max_w(90).truncate().text_size(9.5).text_color(wash(t.muted, "cc")).child(r.machine ?? r.on)))
           .child(svg("mods/icons/pin.svg").size(12).flex_none().text_color(t.accent));
       }
       if (r.kind === "worktree") {
@@ -1058,11 +1077,6 @@ export class Palette extends Workspace {
       }
       if (r.kind === "agent") {
         const a = r.a, p = a.program;
-        // A tile of its own colour, the way a worktree row reads at a glance. A
-        // program without one gets a neutral that is the same in every theme.
-        const tile = tileOf(p) ?? "#24252a";
-        const ink = inkOf(p) ?? "#e6e6e6";
-        const icon = p?.icon ? (p.tint ? svg(p.icon).size(13).text_color(ink ?? t.foreground) : image(p.icon).size(13)) : null;
         return h_flex().id(`pal-agent-${r.inPins ? "pin-" : ""}${a.address}`).relative().mx(4).pl(8 + (r.depth ?? 0) * 16).pr(10).h(38).rounded(9).gap(9).items_center()
           .when(on, (el) => el.bg(wash(t.accent, "16")))
           .when(!on, (el) => el.hover((x) => x.bg(wash(t.foreground, "0b"))))
@@ -1070,10 +1084,7 @@ export class Palette extends Workspace {
           .when(on, (el) => el.child(div().absolute().left(0).top(8).bottom(8).w(2).rounded(1).bg(t.accent)))
           // A child of a space, marked the way a worktree child is.
           .when(Boolean(r.depth), (el) => el.child(div().w(10).flex_none().text_size(10.5).text_color(wash(t.muted, "cc")).child("↳")))
-          .child(div().size(22).flex_none().rounded(7).flex().items_center().justify_center().bg(tile)
-            .border(1).border_color(wash(t.foreground, "14"))
-            .when(!icon, (el) => el.child(div().text_size(10).font_bold().text_color(ink).child((p?.name ?? a.app ?? "?").slice(0, 1).toUpperCase())))
-            .when(Boolean(icon), (el) => el.child(icon)))
+          .child(programTile(t, p, 22, 13))
           .child(h_flex().flex_1().min_w(0).gap(6).items_center()
             .child(this.label(a.title || p?.name || a.app || "agent", t, 12.5, a.status === "idle" ? t.muted : t.foreground))
             .when(Boolean(a.tab_name) && !/^\d+$/.test(a.tab_name ?? ""), (el) => el.child(div().flex_none().max_w(90).truncate().text_size(9.5).text_color(wash(t.muted, "cc")).child(a.tab_name))))

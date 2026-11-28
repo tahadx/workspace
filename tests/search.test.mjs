@@ -64,6 +64,9 @@ function rows(world, q) {
     // has its own home (tests/pinned.test.mjs), so here every row is live.
     liveSpaces() { return world.spaces ?? []; },
     liveTrees() { return this.worktrees; },
+    // Agent homes are the overview's rule (tests/engine.test.mjs); a world may
+    // move an agent into a checkout, else it hangs on the space it names.
+    agentHomes() { return world.homes ?? new Map(); },
     // The sheet's ordering hooks, without a persisted order: the world's own.
     kidsOf(all, id) { return all.filter((s) => this.parent.get(s.id) === id); },
     checkoutsOf(all, id) {
@@ -180,6 +183,28 @@ check("search: the agent is the hit, its space is not",
     && found.find((r) => r.kind === "agent")?.depth === 2,
     JSON.stringify(found.map((r) => [r.kind, r.depth])));
 }
+
+// ---- an agent stays where it is working, query or no query ------------------
+{
+  const moved = {
+    spaces: [{ id: "r", name: "reel", folder: "/repo", machine: null, status: "working" }],
+    agents: [{ address: "t5", space: "r", space_name: "reel", title: "OC | hotfix work", app: "opencode", status: "working" }],
+    worktrees: [{ c: { path: "/repo/hotfix", branch: "hotfix", main: false }, repo: { name: "reel" }, on: null }],
+    checkoutParent: new Map([["\u0000/repo/hotfix", "r"]]),
+    homes: new Map([["t5", "\u0000/repo/hotfix"]]),
+  };
+  const found = rows(moved, "hotfix");
+  const at = found.findIndex((r) => r.kind === "agent");
+  const wtAt = found.findIndex((r) => r.kind === "worktree");
+  check("search: an agent moved into a checkout stays under that checkout",
+    at > wtAt && wtAt >= 0 && found[at].depth === found[wtAt].depth + 1,
+    JSON.stringify(found.map((r) => [r.kind, r.depth])));
+}
+
+check("search: placement comes from the overview's one rule",
+  /this\.agentHomes\(/.test(src) && /homes\.get\(a\.address\)/.test(src));
+check("search: a pin found here keeps its machine",
+  /machine: r\.machine \?\? r\.on \?\? null/.test(src));
 
 check("search: a folderless active space still loads the other spaces' worktrees",
   !/if \(!this\.folder\) \{ this\.loaded = true; return; \}/.test(src));

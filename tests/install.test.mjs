@@ -51,6 +51,22 @@ try {
   check("install.sh does not copy the removed search mod", !existsSync(join(home, "mods", "search")));
   check("install.sh does not copy the removed handle mod", !existsSync(join(home, "mods", "handle")));
 
+  // Every mod the layout names has to be installed, or a fresh home opens an
+  // empty block (the command bar and pane headers were missing exactly this way).
+  const modsIn = (node, out = new Set()) => {
+    if (node && typeof node === "object") {
+      if (typeof node.mod === "string") out.add(node.mod);
+      for (const value of Object.values(node)) modsIn(value, out);
+    }
+    return out;
+  };
+  const installedLayout = JSON.parse(readFileSync(join(home, "layouts", "workspace.json"), "utf8"));
+  const wanted = modsIn(installedLayout);
+  // `files` and `changes` are Herdr's own panels, not this bundle's.
+  const shipped = new Set(["files", "changes"]);
+  const missing = [...wanted].filter((name) => !shipped.has(name) && !existsSync(join(home, "mods", name, "main.js")));
+  check("install.sh copies every mod the layout names", missing.length === 0, missing.join(", "));
+
   check("Alt+F is installed in the layout's own section",
     layout["alt-f"] === "mod.open:agents-list", JSON.stringify(layout["alt-f"]));
   check("the tab and space numbers are installed",

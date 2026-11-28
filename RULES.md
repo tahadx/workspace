@@ -142,7 +142,51 @@ Terminology used in this file:
   because its row is still there.
 - It updates with the list, from the same derivation — no separate timer, no cached header.
 
-## 11. Where this lives
+## 11. Settings
+
+- **One set of settings for the whole window.** Fonts, font sizes, the UI font, zoom,
+  theme and appearance, terminal line height / cell width / scroll speed, sounds and the
+  worktree directory come from the same source everywhere. No mod keeps its own copy of a
+  setting — no duplicated font, text size or theme colour. The only fixed colours are
+  identity marks (a place's avatar, a program's tile), which look the same in both views.
+- **A settings change must land across the whole setup at once** — sidebar, find sheet,
+  command bar, pane chrome, terminals, dialogs and overlays — with no restart and no
+  layout switch. Changing the font size must not leave one panel at the old size.
+- Read colours from `theme()`, write sizes in px at **zoom 1** (the app scales them), and
+  take fonts and terminal metrics from the layout/settings. Never hardcode a font family,
+  a hex colour, or a window-pixel size that assumes the current zoom.
+- **A value has one owner: never state it twice.** Fonts and terminal metrics belong to
+  `settings.json`; the layout leaves those fields **unset** so the Settings screen can
+  change the window. The layout owns its geometry, theme and colours. Stating a
+  settings-owned field in the layout silently shadows the setting — that is how the
+  screen came to promise `terminal_line_height: 1` while the window drew `1.15`.
+- Settings Herdr applies itself — zoom, the theme picker, fonts, sounds, the worktree
+  directory — must land live everywhere. Nothing may keep a second copy or ignore one.
+- Dialogs and menus follow the same rules: no separate text scale, no fixed widths that
+  only fit one font size.
+
+## 12. No duplication
+
+- **Every thing appears exactly once**: one row per space, one per worktree, one per agent
+  session. No view may show the same thing twice — not inside one view, not between the
+  sidebar and the sheet, not across machines.
+- A worktree is either **nested under its repo** (as a checkout row) or **open as its own
+  space** under that repo — never both. Opening a checkout moves the row; it does not add
+  one, and closing it puts the checkout row back.
+- A **pinned place that still has its live space** is one row, not a pin row plus a space
+  row. A pin whose space is gone still appears once.
+- An **agent is one row per session**, even when two terminals report the same session id.
+  When a terminal reports no session record at all (opencode `--auto` does this), the same
+  program + title + the folder its TUI published still count as one session — two folders
+  or two programs keep two rows. A sub-agent stays under the agent that started it and is
+  not also listed on its own.
+- De-duplication lives in the engine and both views consume it. When two sources can
+  describe the same thing (`spaces()`, the checkout list, agent terminals, pins), the
+  engine resolves them to **one identity**.
+- Identity is id / path / machine, **not name**: two different branches with the same title
+  are two rows; one checkout seen through two sources is one.
+
+## 13. Where this lives
 
 | Piece | File |
 | --- | --- |
@@ -151,7 +195,8 @@ Terminology used in this file:
 | Sidebar drawing and its keyboard | `mods/agents-list/sidebar.js` |
 | Find sheet drawing and its keyboard | `mods/agents-list/palette.js` |
 | Sidebar modes and their controls | `mods/command-bar/main.js` |
-| Hover-to-focus | `mods/hoverfocus/main.js` |
+| Hover-to-focus and the pane header | `mods/glass-pane/main.js` |
+| Settings and look | `settings.json`, the layout root's look fields, `themes/` |
 | Bindings | `keys.json`, `docs/bindings.md` |
 | Shared state keys | `spaces.pinned`, `workspace.state` (its `git`, `trees`, `spacePins` and `order`), `worktree.removing`, `worktree.removalFailed`, `space.closing`, `sidebar.width` |
 
@@ -161,7 +206,8 @@ Verify a change with:
 node tests/*.test.mjs
 herdr-app check mods/agents-list
 herdr-app check mods/command-bar
-herdr-app check mods/hoverfocus
+herdr-app check mods/glass-pane
+herdr-app check mods/worktrees
 ```
 
 The tests named `search`, `count`, `pins`, `pinned`, `reorder`, `removed`, `pending`,

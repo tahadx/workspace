@@ -3,7 +3,7 @@
 
 import { div, image, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { agents, terminals, panes, focused, spaces, machines, run, exec, hc, theme, shared, setShared, setAgentOrder, openOverlay, closeOverlay, props, window, layout, watchFolder, notify } from "herdr";
+import { agents, terminals, panes, focused, spaces, machines, run, exec, hc, theme, shared, setShared, setAgentOrder, openOverlay, closeOverlay, props, window, layout, watchFolder, notify, settings } from "herdr";
 import {
   Workspace, wash, place, norm, tidyPath, base, inWorktrees, removingList, removalOf, setRemovalFailure, clearRemovalFailure,
   pinnedList, pinnedRepo, isPinned, checkouts, dropGitCache, worktreeTree, spaceColor, RANK, MARK,
@@ -11,7 +11,7 @@ import {
   onGitRefresh, takeGitAsk, touchWorkspace, listedCheckouts, pictureKey,
   beginPaint, endPaint, frameCache, spaceRecord, pinSpace, persistWorkspace, spaceRead, inside,
   checkoutRecordOf, groupKeyOf, worktreeSiblings, movePathWithin, machineIndexOf,
-  orderedPaths, orderedPlaces, ribbonPins, agentFolders, dedupeSessions, SEP,
+  orderedPaths, orderedPlaces, ribbonPins, agentFolders, dedupeSessions, SEP, programTile,
 } from "./workspace-engine.js";
 
 // Close a space once. A deleted folder and a removed checkout are noticed by
@@ -292,25 +292,6 @@ const countPill = (t, n, tone = null) => div().flex_none().min_w(18).h(16).px(5)
   .bg(tone ? wash(tone, "16") : wash(t.foreground, "0a"))
   .border(1).border_color(tone ? wash(tone, "24") : wash(t.foreground, "0c"))
   .text_size(9).font_medium().text_color(tone ?? t.muted).flex().items_center().justify_center().child(String(n));
-
-// The program on a tile of its own colour, the way the palette draws an agent.
-// A known tile colour carries the program's identity; otherwise it is a quiet
-// wash, so every row still lines up on the same left edge.
-function appTile(t, p, size = 22, glyph = 14) {
-  // A shell keeps the app's own terminal icon in the muted text colour: it is
-  // not a brand, and the app's table paints it bright green.
-  const plain = Boolean(p) && (p.shell || p.key === "shell");
-  const known = !plain && /^#[0-9a-fA-F]{6}$/.test(p?.tile ?? "");
-  const pic = icon(p, glyph, plain ? t.muted : (p?.color ?? t.foreground));
-  return div().size(size).flex_none().rounded(size >= 22 ? 7 : 6)
-    .bg(known ? wash(p.tile, "2e") : wash(t.foreground, "08"))
-    .border(1).border_color(known ? wash(p.tile, "3c") : wash(t.foreground, "10"))
-    .flex().items_center().justify_center()
-    .when(Boolean(pic), (el) => el.child(pic))
-    .when(!pic && !plain && Boolean(p?.name), (el) => el.child(div().text_size(size * 0.44).font_semibold().text_color(t.muted)
-      .child(String(p.name).slice(0, 1).toUpperCase())))
-    .when(!pic && (plain || !p?.name), (el) => el.child(svg(plain ? "mods/icons/terminal.svg" : "mods/icons/layers.svg").size(glyph).text_color(t.muted)));
-}
 
 export class Sidebar extends Workspace {
   init(_props, cx) {
@@ -648,7 +629,11 @@ export class Sidebar extends Workspace {
         try {
           paths = await watchFolder(dir);
         } catch {
-          return; // a folder that can't be watched keeps the timer as its clock
+          // A folder that can't be watched keeps the timer as its clock, and a
+          // later scan may arm the watch again (a mount that came back, a tree
+          // that got smaller). Leaving the key set made the failure permanent.
+          this.watching.delete(key);
+          return;
         }
         if (!gitTouched(paths, dir)) continue;
         this.invalidate(scope);
@@ -1443,8 +1428,9 @@ export class Sidebar extends Workspace {
       .min_h(0)
       .overflow_hidden()
       .on_size_change((size, cx) => {
-        if (Math.abs((this.viewH[key] ?? -1) - size.height) < 0.5) return;
-        this.viewH[key] = size.height;
+        const h = size.height / (settings().zoom || 1);
+        if (Math.abs((this.viewH[key] ?? -1) - h) < 0.5) return;
+        this.viewH[key] = h;
         cx.notify();
       })
       .on_scroll_wheel((e, cx) => this.listWheel(e, cx))
@@ -1475,8 +1461,9 @@ export class Sidebar extends Workspace {
         .pr(12)
         .when(padBottom > 0, (el) => el.pb(padBottom))
         .on_size_change((size, cx) => {
-          if (Math.abs((this.contentH[key] ?? -1) - size.height) < 0.5) return;
-          this.contentH[key] = size.height;
+          const h = size.height / (settings().zoom || 1);
+          if (Math.abs((this.contentH[key] ?? -1) - h) < 0.5) return;
+          this.contentH[key] = h;
           cx.notify();
         })
         // One measured wrapper per row: `reveal` sums them to find a row, since
@@ -1485,7 +1472,7 @@ export class Sidebar extends Workspace {
         .children(rows.map((row, i) => div()
           .id(`${key}-row-${i}`)
           .flex_none()
-          .on_size_change((size) => { hs[i] = size.height; })
+          .on_size_change((size) => { hs[i] = size.height / (settings().zoom || 1); })
           .child(row))))
       .when(on, (el) => el.child(div()
         .id(`${key}-bar`)
@@ -1527,7 +1514,7 @@ export class Sidebar extends Workspace {
   barDown(e, cx) {
     const g = this.bar;
     if (!g || !(g.track > 0) || !(g.max > 0)) return;
-    const y = Math.max(0, Math.min(e.local_position?.y ?? 0, g.track));
+    const y = Math.max(0, Math.min((e.local_position?.y ?? 0) / (settings().zoom || 1), g.track));
     const held = y >= g.thumbY && y <= g.thumbY + g.thumbH;
     const grab = held ? y - g.thumbY : g.thumbH / 2;
     this.barDrag = { grab };
@@ -1540,7 +1527,7 @@ export class Sidebar extends Workspace {
   // and the move arrives against the list's own box.
   barMove(e, cx) {
     if (!this.barDrag) return;
-    const next = this.scrollToY((e.local_position?.y ?? 0) - BAR_INSET - this.barDrag.grab);
+    const next = this.scrollToY((e.local_position?.y ?? 0) / (settings().zoom || 1) - BAR_INSET - this.barDrag.grab);
     if (next === this.scrollTop) return;
     this.scrollTop = next;
     cx.notify();
@@ -1549,7 +1536,7 @@ export class Sidebar extends Workspace {
   listWheel(e, cx) {
     const g = this.bar;
     if (!g || !(g.max > 0)) return;
-    const next = Math.max(0, Math.min(this.scrollTop - (e.delta?.y ?? 0), g.max));
+    const next = Math.max(0, Math.min(this.scrollTop - (e.delta?.y ?? 0) / (settings().zoom || 1), g.max));
     if (next === this.scrollTop) return;
     this.scrollTop = next;
     cx.notify();
@@ -1990,7 +1977,7 @@ export class Sidebar extends Workspace {
       .children(s.lines.map(l => div().self_start().mt(-4).w(9).h(18).mr(4).flex_none()
         .when(Boolean(l), el => el.border_l(1.5).border_color(wash(t.foreground, "1c")))
         .when(l === "└" || l === "├", el => el.border_b(1.5).rounded_bl(6))))
-      .child(div().mr(8).child(appTile(t, k.program, 18, 11.5).when(on, (el) => el.border_color(wash(t.accent, "70")))))
+      .child(div().mr(8).child(programTile(t, k.program, 18, 11.5).when(on, (el) => el.border_color(wash(t.accent, "70")))))
       .child(div().flex_1().min_w(0).truncate().text_color(t.foreground)
         .when(on, (el) => el.font_medium())
         .child(k.name || k.template || k.program?.name || k.address))
@@ -2123,7 +2110,7 @@ export class Sidebar extends Workspace {
     if (a.status === "blocked") return div().flex_none().px(6).h(18).rounded(5).bg(wash(t.blocked, "20")).text_size(9.5).font_semibold().text_color(t.blocked).flex().items_center().child("Needs you");
     // Idle: a ring; done: a filled dot. Both calm enough to scan past.
     if (a.status === "idle") return div().size(6).mx(3).flex_none().rounded(3).border(1.5).border_color(t.idle ?? t.dim).tooltip("Idle");
-    return div().size(6).mx(3).flex_none().rounded(3).bg(a.status === "done" ? color : t.dim + "00").tooltip(a.status === "done" ? "Done" : "Unknown");
+    return div().size(6).mx(3).flex_none().rounded(3).bg(a.status === "done" ? color : "#00000000").tooltip(a.status === "done" ? "Done" : "Unknown");
   }
 
   // ── Priority and Grouped by space: Herdr's own list, unspecialised ────────
@@ -2136,11 +2123,11 @@ export class Sidebar extends Workspace {
   plainStatus(t, a, compact = false) {
     const color = t[a.status] ?? t.dim;
     if (a.status === "working") return svg("mods/workspace-chrome/spinner.svg").size(12).mx(1).flex_none().text_color(t.working).spin(900);
-    if (a.status === "blocked" && compact) return div().size(14).flex_none().rounded(4).bg(t.blocked + "26").text_size(10.5).font_bold().text_color(t.blocked).flex().items_center().justify_center().child("!");
-    if (a.status === "blocked") return div().flex_none().px(6).h(18).rounded(5).bg(t.blocked + "26").text_size(10.5).font_semibold().text_color(t.blocked).flex().items_center().child("Needs you");
+    if (a.status === "blocked" && compact) return div().size(14).flex_none().rounded(4).bg(wash(t.blocked, "26")).text_size(10.5).font_bold().text_color(t.blocked).flex().items_center().justify_center().child("!");
+    if (a.status === "blocked") return div().flex_none().px(6).h(18).rounded(5).bg(wash(t.blocked, "26")).text_size(10.5).font_semibold().text_color(t.blocked).flex().items_center().child("Needs you");
     // Idle: a ring; done: a dot.
     if (a.status === "idle") return div().size(7).mx(3).flex_none().rounded(4).border(1.5).border_color(t.idle ?? t.dim);
-    return div().size(7).mx(3).flex_none().rounded(4).bg(a.status === "done" ? color : t.dim + "00");
+    return div().size(7).mx(3).flex_none().rounded(4).bg(a.status === "done" ? color : "#00000000");
   }
 
   // A sub-agent: the tree lines in front of it, then its own name.
@@ -2219,9 +2206,10 @@ export class Sidebar extends Workspace {
     const now = Date.now();
     this.track(list, now);
     // A kept sub-agent (one with a pane) is in agents() too: where a tree shows
-    // it, it gets no row of its own, unless it's pinned.
+    // it, it gets no row of its own. A pin must not add a second row: one row
+    // per session is the rule, and the nested row is where it is working.
     const nested = new Set(collapsed ? [] : list.flatMap((a) => subsOf(a.address).map((s) => s.t.address)));
-    list = list.filter((a) => a.pinned || !nested.has(a.address));
+    list = list.filter((a) => !nested.has(a.address));
     const tabCounts = new Map();
     for (const a of list) tabCounts.set(a.tab, (tabCounts.get(a.tab) ?? 0) + 1);
     const rankOf = (a) => RANK[a.status] ?? 0;
@@ -2538,7 +2526,7 @@ export class Sidebar extends Workspace {
     if (createdAt !== (this.createdAt ?? 0)) {
       this.createdAt = createdAt;
       const createdNow = shared("worktree.created");
-      if (createdAt && typeof createdNow === "string") this.noteCreated(createdNow, createdAt);
+      if (createdAt && typeof createdNow === "string") this.noteCreated(createdNow, createdAt, shared("worktree.createdOn") ?? null);
     }
     const missing = this.folderMissing(paneList);
     if (idsNow !== this.ids || createdAt !== (this.createdSeen ?? 0) || missing) {
@@ -2706,7 +2694,7 @@ export class Sidebar extends Workspace {
             cx.stop_propagation();
             this.folded.has(a.address) ? this.folded.delete(a.address) : this.folded.add(a.address);
             cx.notify();
-          })).child(appTile(t, a.program, 20, 13).when(a.focused, (el) => el.border_color(wash(t.accent, "70")))))
+          })).child(programTile(t, a.program, 20, 13).when(a.focused, (el) => el.border_color(wash(t.accent, "70")))))
         .child(h_flex().flex_1().min_w(0).gap(5).items_center()
           .child(div().flex_1().min_w(0).max_w(full && more ? 150 : 200).truncate().text_size(12.5)
             .when(a.focused, (el) => el.font_medium())
@@ -2786,7 +2774,7 @@ export class Sidebar extends Workspace {
       // nobody could see. A pin is a place too: when its space's shell exits the
       // row stays (and opens a shell there), so the count must not drop with the
       // space. Agents are not spaces either.
-      this.spaceCount = placeCount(allSpaces, pinsNow, (s) => forest.worktrees.has(s.id));
+      this.spaceCount = placeCount(allSpaces, pinsNow, (s) => this.isWorktree(s));
 
       // A worktree just made from a folded space opens it, or it would land unseen.
       const owner = shared("worktree.owner");
@@ -2885,7 +2873,7 @@ export class Sidebar extends Workspace {
         // A checkout at the top of a section (a worktree whose repo has no space
         // here) keeps the branch mark, not the avatar: it reads as the checkout it
         // is, and it never gains a space's drag or its pin.
-        const linked = !tree && forest.worktrees.has(s.id);
+        const linked = !tree && this.isWorktree(s);
         const pin = pinOf(s);
         const removal = this.removalForRow({ kind: "space", s });
         const fill = spaceColor(t, s);
@@ -2937,6 +2925,9 @@ export class Sidebar extends Workspace {
             .when(from < index, (l) => l.bottom(0))
             .when(from > index, (l) => l.top(0))))
           .on_mouse_down("left", () => {
+            // A row on its way out is not a place to go or to drag: the folder
+            // may be half gone, and the row already says so.
+            if (removal) { this.pressed = null; this.over = null; return; }
             // A worktree is dragged inside its own repo group (it has its own
             // persisted order); it is never a `space.move`. A checkout whose repo
             // has no row here is not a space of any section: it opens on click and
@@ -2975,6 +2966,9 @@ export class Sidebar extends Workspace {
             this.pressMachine = null;
             this.pressTree = false;
             this.pressParent = null;
+            // Enter and click share one rule (`openRow`): a removing row never
+            // opens, and a top-level checkout row opens like any other row.
+            if (removal) { cx.notify(); return; }
             if (tree) {
               // A click opens it. A drag inside the group reorders the checkouts;
               // a drag from anywhere else does nothing.
@@ -3007,7 +3001,7 @@ export class Sidebar extends Workspace {
               if (from >= 0 && to >= 0) {
                 this.landReorder(spaces().find((x) => x.id === was), s, ids, to > from ? 1 : -1);
               }
-            } else if (was === s.id) this.openSpace(s);
+            } else if (was === null || was === s.id) this.openSpace(s);
             cx.notify();
           })
           .on_mouse_down("right", (_e, cx) => { cx.stop_propagation(); this.spaceMenu(s); })
@@ -3171,7 +3165,7 @@ export class Sidebar extends Workspace {
         const id = `sp-${s.id}`;
         const open = !this.folded.has(id);
         out.push(spaceRow(s, kids, depth, sect, places));
-        this.entries.push({ key: id, kind: "space", id: s.id, name: placeName(s, sect), linked: forest.worktrees.has(s.id), sect, at: out.length - 1 });
+        this.entries.push({ key: id, kind: "space", id: s.id, name: placeName(s, sect), linked: this.isWorktree(s), sect, at: out.length - 1 });
         if (!open) return;
         kids.forEach((a, i) => {
           order.push(a.address);
@@ -3336,7 +3330,7 @@ export class Sidebar extends Workspace {
       const pinWorktrees = (p) => {
         const repo = pinRepo(p);
         if (!repo) return [];
-        return orderedPaths(repo, allSpaces.filter((w) => forest.worktrees.has(w.id)
+        return orderedPaths(repo, allSpaces.filter((w) => this.isWorktree(w)
           && !forest.parents.has(w.id)
           && (w.machine ?? null) === (p.machine ?? null)
           && `${w.machine ?? ""}${SEP}${tidyPath(this.checkoutRecord(w, paneList)?.main ?? "")}` === repo),
@@ -3360,7 +3354,7 @@ export class Sidebar extends Workspace {
         }
         // A worktree is a checkout, never a row of a section: one whose repo has
         // no space here is drawn with the other unheld checkouts, below.
-        const loose = mine.filter((s) => !pinnedIds.has(s.id) && !forest.worktrees.has(s.id));
+        const loose = mine.filter((s) => !pinnedIds.has(s.id) && !this.isWorktree(s));
         // One slot per pin, in the order the pins were made — the sheet draws the
         // same order. A place whose space is gone keeps its line, and the space a
         // click opens there takes that line back, so a pinned space never moves
@@ -3373,10 +3367,10 @@ export class Sidebar extends Workspace {
             // The live places of this ribbon, in the pin order the rows are
             // drawn: the drag's line and the step's neighbours read this, never
             // the app's order (the two differ as soon as a pin is moved).
-            const pinPlaces = pins.filter(({ s }) => s && !forest.worktrees.has(s.id)).map(({ s }) => s);
+            const pinPlaces = pins.filter(({ s }) => s && !this.isWorktree(s)).map(({ s }) => s);
             // Their worktrees come with them: a pinned repo brings its checkouts.
             for (const { p, s } of pins) {
-              if (s && !forest.worktrees.has(s.id)) { emitSpace(s, 0, id, pinPlaces); continue; }
+              if (s && !this.isWorktree(s)) { emitSpace(s, 0, id, pinPlaces); continue; }
               const key = `pin-${p.machine ?? ""}-${norm(p.folder)}`;
               out.push(pinSpaceRow(p));
               this.entries.push({ key, kind: "pin", pin: { ...p, machine: p.machine ?? null }, at: out.length - 1 });
@@ -3411,7 +3405,7 @@ export class Sidebar extends Workspace {
           && !forest.checkoutParents.has(`${c.on ?? ""}\u0000${c.path}`)
           && !forest.opened.has(`${c.on ?? ""}\u0000${norm(c.path).replace(/\/+$/, "")}`)
           && !drawnPinCheckouts.has(`${c.on ?? ""}${SEP}${tidyPath(c.path)}`));
-        const homeless = mine.filter((s) => forest.worktrees.has(s.id) && !forest.parents.has(s.id)
+        const homeless = mine.filter((s) => this.isWorktree(s) && !forest.parents.has(s.id)
           && !drawnPinWorktrees.has(s.id));
         if (orphans.length || homeless.length) {
           const id = manyMachines ? `${mid}-worktrees` : "sec-worktrees";

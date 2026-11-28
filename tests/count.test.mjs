@@ -82,9 +82,9 @@ check("that number is one more than live places alone",
 const sidebar = read("agents-list", "sidebar.js");
 const palette = read("agents-list", "palette.js");
 check("the sidebar imports the one count rule", /placeCount/.test(sidebar.slice(0, sidebar.indexOf("function columnOf"))));
-check("the sidebar counts places and its orphan pins, not live spaces alone",
-  /this\.spaceCount = placeCount\(allSpaces, pinsNow, \(s\) => forest\.worktrees\.has\(s\.id\)\)/.test(sidebar),
-  "spaceCount must use placeCount(allSpaces, pinsNow, worktree test)");
+check("the sidebar counts places with the shared worktree test",
+  /this\.spaceCount = placeCount\(allSpaces, pinsNow, \(s\) => this\.isWorktree\(s\)\)/.test(sidebar),
+  "spaceCount must use placeCount(allSpaces, pinsNow, this.isWorktree)");
 check("the sidebar header reads that count", /this\.spaceCount \?\?/.test(sidebar));
 check("the sheet imports the same rule", /placeCount/.test(palette.slice(0, palette.indexOf("export class Palette"))));
 check("the sheet counts places and its orphan pins with the same rule",

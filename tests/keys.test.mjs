@@ -95,6 +95,13 @@ check("the sidebar takes relayed commands on its timer",
   && /setShared\("agents\.command\.ack"/.test(side));
 check("New space falls back when no sidebar copy has started",
   /cx\.timer\.after\(1000[\s\S]{0,180}run\("space\.new"\)/.test(bar));
+check("the first Alt+B hands focus to the panel after it starts",
+  /wasHidden[\s\S]{0,260}cx\.timer\.after\(120, ask\)/.test(bar),
+  "a token set before the copy starts becomes its baseline");
+check("the worktree and close keys start the panel when no copy exists",
+  /setSidebarMode\("wide"\)[\s\S]{0,160}relay\(c\)/.test(bar));
+check("the sidebar has one mode cycle: wide, compact, hidden",
+  /SIDEBAR_MODES = \["wide", "compact", "hidden"\]/.test(bar));
 check("Ctrl+Shift+B is this layout's, not Herdr's global",
   bindings.global?.["ctrl-shift-b"] === undefined
   && !/layout\.toggle:sidebar/.test(read("keys.json"))

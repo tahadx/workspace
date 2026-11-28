@@ -3,7 +3,7 @@
 
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, Scrollbar } from "gpui-base";
-import { run, props, closeOverlay, theme, spaces, panes, agents, exec, home, setShared, shared, layout, window, notify } from "herdr";
+import { run, props, closeOverlay, theme, spaces, panes, agents, exec, home, setShared, shared, layout, window, notify, readTextFile, appHome } from "herdr";
 
 const wash = (c, a = "14") => (/^#[0-9a-fA-F]{6}$/.test(c ?? "") ? c + a : c);
 
@@ -132,8 +132,19 @@ function place(s, all = panes()) {
   return all.find((p) => tabs.has(p.tab) && p.cwd)?.cwd || s.folder || null;
 }
 
-// Checkouts go to <ROOT>/<repo>/<branch, slashes as dashes>.
-const ROOT = (home) => `${home}/.herdr/worktrees`;
+// Checkouts go to <root>/<repo>/<branch, slashes as dashes>. The root is the
+// person's `worktrees.directory` (settings.json owns it, the same one Herdr's
+// own space menu uses), else Herdr's default. Read from the file: `settings()`
+// carries the layout's look and zoom, not the worktree folder.
+async function root(userHome) {
+  const raw = await readTextFile(`${appHome()}/settings.json`);
+  const directory = (raw === null ? {} : JSON.parse(raw))?.worktrees?.directory ?? "~/.herdr/worktrees";
+  if (typeof directory !== "string" || !directory.trim()) throw new Error("worktrees.directory must be a non-empty path.");
+  let path = directory.replace(/\\/g, "/");
+  if (path === "~" || path.startsWith("~/")) path = userHome.replace(/\\/g, "/").replace(/\/$/, "") + path.slice(1);
+  if (!path.startsWith("/") && !/^[A-Za-z]:\//.test(path)) throw new Error("worktrees.directory must be an absolute path or start with ~/.");
+  return path.replace(/\/+$/, "");
+}
 // Home as ~ (git says C:/Users/x where Windows says C:\Users\x).
 const tilde = (path, userHome) => {
   const [p, h] = [path, userHome].map((s) => s.replace(/\\/g, "/"));
@@ -282,6 +293,7 @@ export default class Worktree extends View {
           if (result.code !== 0 || !result.stdout.trim()) throw new Error("Could not find the remote home folder.");
           this.userHome = result.stdout.trim().replace(/\\/g, "/");
         }
+        if (!this.opening && props()?.action !== "remove") this.root = await root(this.userHome);
         this.folder = props()?.folder || place(this.space()) || this.userHome;
         // The repo is set last: Enter does nothing until the warnings it consents to are known.
         const repo = await repoOf(this.folder, this.on);
@@ -521,7 +533,7 @@ export default class Worktree extends View {
   async create() {
     const branch = this.text.trim();
     if (!branch) return "Type a branch name.";
-    const path = `${ROOT(this.userHome)}/${this.repo.name}/${slug(branch)}`;
+    const path = `${this.root}/${this.repo.name}/${slug(branch)}`;
     const exists = (await git(this.repo.main, ["show-ref", "--verify", "--quiet", `refs/heads/${branch}`], this.on)).ok;
     const add = exists ? ["worktree", "add", path, branch] : ["worktree", "add", "-b", branch, path, "HEAD"];
     const r = await git(this.repo.top, add, this.on, 600_000);
@@ -530,6 +542,7 @@ export default class Worktree extends View {
     // (from that tree) is what starts a space, so creating one never adds a space.
     // The panel underneath re-reads its worktrees and selects this one.
     setShared("worktree.created", path);
+    setShared("worktree.createdOn", this.on ?? null);
     setShared("worktree.createdAt", Date.now());
     return "";
   }
@@ -731,7 +744,7 @@ export default class Worktree extends View {
             ? !r.linked
               ? "This is the repository's main checkout, not a worktree."
               : `${closing.length ? `Closes ${spacesNamed(closing)} and deletes` : "Deletes"} ${tilde(r.top, this.userHome)}. The branch stays.${stayingNote}`
-            : `A new checkout in ${tilde(ROOT(this.userHome), this.userHome)}/${r.name}/. An existing branch is checked out; a new name starts from here.`;
+            : `A new checkout in ${tilde(this.root ?? `${this.userHome}/.herdr/worktrees`, this.userHome)}/${r.name}/. An existing branch is checked out; a new name starts from here.`;
     const blocked = Boolean(pinnedSpace) || (!closeSpace && ((!r && !this.staleCheckout) || (remove && r && !r.linked)));
     const warn = remove || Boolean(pinnedSpace);
     return v_flex()

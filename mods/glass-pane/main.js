@@ -103,7 +103,7 @@ export default class GlassPane extends View {
           .when(st === "working", (el) =>
             el.child(svg("mods/workspace-chrome/spinner.svg").size(12).flex_none().text_color(t.working).spin(900)))
           .when(st === "blocked", (el) =>
-            el.child(div().flex_none().px(7).h(18).flex().items_center().rounded(5).bg(t.blocked + "26").text_size(10).font_semibold().text_color(t.blocked).child("Needs you")))
+            el.child(div().flex_none().px(7).h(18).flex().items_center().rounded(5).bg(wash(t.blocked, "26")).text_size(10).font_semibold().text_color(t.blocked).child("Needs you")))
           .when(st === "done", (el) => el.child(div().size(7).flex_none().rounded_full().bg(t.done)))
           .child(this.button(t, `gs-r-${pane}`, "split-right", "pane.split", { direction: "right", pane }))
           .child(this.button(t, `gs-d-${pane}`, "split-down", "pane.split", { direction: "down", pane }))

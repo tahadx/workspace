@@ -22,7 +22,7 @@
 // space is, what a pin is, what is on its way out, how a step lands, what Ctrl+D
 // does to a row. What is left in palette.js and sidebar.js is how each one draws
 // and walks its own rows.
-import { View, div } from "gpui-kit";
+import { View, div, image, svg } from "gpui-kit";
 import { spaces, panes, terminals, agents, run, shared, setShared, notify, keys, openOverlay, exec, home, checking } from "herdr";
 
 // A separator for keys that cross into shared.json. NUL is fine inside this
@@ -51,6 +51,28 @@ export const inkOf = (p) => {
   const [r, g, b] = [(n >> 16) & 255, (n >> 8) & 255, n & 255];
   return 0.299 * r + 0.587 * g + 0.114 * b > 150 ? "#121212" : "#ffffff";
 };
+
+// The program's mark on a tile, drawn the same in both views. A known tile
+// colour carries the program's identity through a wash of that colour; without
+// one the tile is a quiet theme wash, so every row lines up on the same edge.
+// A shell keeps the app's own terminal icon in the muted text colour: it is not
+// a brand, and the app's table paints it bright green.
+export function programTile(t, p, size = 22, glyph = 14) {
+  const plain = Boolean(p) && (p.shell || p.key === "shell");
+  const known = !plain && /^#[0-9a-fA-F]{6}$/.test(p?.tile ?? "");
+  const pic = p?.icon
+    ? (p.tint ? svg(p.icon).size(glyph).flex_none().text_color(plain ? t.muted : (p.color ?? t.foreground))
+      : image(p.icon).w(glyph).h(glyph).flex_none())
+    : null;
+  return div().size(size).flex_none().rounded(size >= 22 ? 7 : 6)
+    .bg(known ? wash(p.tile, "2e") : wash(t.foreground, "08"))
+    .border(1).border_color(known ? wash(p.tile, "3c") : wash(t.foreground, "10"))
+    .flex().items_center().justify_center()
+    .when(Boolean(pic), (el) => el.child(pic))
+    .when(!pic && !plain && Boolean(p?.name), (el) => el.child(div().text_size(size * 0.44).font_semibold().text_color(t.muted)
+      .child(String(p.name).slice(0, 1).toUpperCase())))
+    .when(!pic && (plain || !p?.name), (el) => el.child(svg(plain ? "mods/icons/terminal.svg" : "mods/icons/layers.svg").size(glyph).text_color(t.muted)));
+}
 
 // A small keyboard cap, so shortcuts read as keys rather than as prose.
 export const keycap = (t, label, tone = t.muted) => div().flex_none().h(18).px(5).rounded(4)
@@ -285,12 +307,31 @@ export function dedupeSessions(list, all = frameCache("terminals", terminals)) {
     const records = byAddress.get(a.address)?.records;
     return records ? Object.keys(records) : [];
   };
+  // Some agents report a status but no session record at all (opencode does
+  // this for `--auto`): a resumed view and the old view are then two rows with
+  // no id to join them. They still agree on the program, the title the program
+  // set, and the folder the TUI published — the same agent, resumed. Two agents
+  // can share a title, so the folder is required; two folders keep two rows.
+  const tidy = (p) => String(p ?? "").replace(/\\/g, "/").replace(/\/+$/, "");
+  const looseOf = (a) => {
+    const term = byAddress.get(a.address);
+    const app = a.app ?? a.program?.key ?? a.program?.name ?? "";
+    const title = String(a.title ?? "").trim().toLowerCase();
+    const folder = tidy(term?.labels?.["herdr.cwd"] ?? term?.cwd ?? "");
+    return app && title && folder ? `same\u0000${app}\u0000${title}\u0000${folder}` : null;
+  };
+  const keysOf = (a) => {
+    const ids = sessionsOf(a);
+    if (ids.length) return ids;
+    const loose = looseOf(a);
+    return loose ? [loose] : [];
+  };
   const better = (a, b) => (a.focused !== b.focused ? a.focused
     : a.pinned !== b.pinned ? a.pinned : (a.seq ?? 0) > (b.seq ?? 0));
   const chosen = new Map();
   const keys = new Map();
   for (const a of list) {
-    const ks = sessionsOf(a);
+    const ks = keysOf(a);
     keys.set(a.address, ks);
     for (const k of ks) {
       const current = chosen.get(k);
@@ -942,17 +983,22 @@ export function touchWorkspace() {
 // git scan that follows replaces the guess. The same timestamp is one add: the
 // sidebar and the sheet both see it, and the second must not bump the scan
 // generation again.
-export function noteCheckout(path, at) {
+export function noteCheckout(path, at, on = null) {
   if (at && workspace.notedAt === at) return false;
   const clean = tidyPath(path);
-  const m = clean.match(/^(.*)\/worktrees\/([^/]+)\/([^/]+)$/);
-  if (!m) return false;
+  // <root>/<repo>/<branch>: the root is the person's `worktrees.directory`, so
+  // the layout of the path below it is all this may assume.
+  const parts = clean.split("/").filter(Boolean);
+  const branch = parts.pop();
+  const repo = parts.pop();
+  if (!repo || !branch) return false;
   if (at) workspace.notedAt = at;
-  const repo = m[2];
-  const branch = m[3];
   let known = false;
   for (const key of Object.keys(workspace.trees)) {
-    const main = key.split(SEP)[1] ?? "";
+    const [keyOn, main = ""] = key.split(SEP);
+    // A checkout made here belongs to this machine's repo, never to a repo on
+    // another machine that happens to share its folder name.
+    if ((keyOn || null) !== (on ?? null)) continue;
     if (base(main) !== repo) continue;
     known = true;
     dropGitCache(main);
@@ -1426,7 +1472,7 @@ export class Workspace extends View {
   get treesGen() { return workspace.treesGen; }
   set treesGen(n) { workspace.treesGen = n; }
 
-  noteCreated(path, at) { noteCheckout(path, at); }
+  noteCreated(path, at, on = null) { noteCheckout(path, at, on); }
 
   noteTree() { touchWorkspace(); }
 

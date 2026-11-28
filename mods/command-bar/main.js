@@ -13,6 +13,10 @@ import { agents, spaces, panes, focused, theme, run, shared, setShared, layout, 
 const MARK = { ansi6: "#22a99a", ansi3: "#e3814f", ansi4: "#5b8def", ansi5: "#8b7cf6", ansi2: "#3fae6a", ansi1: "#d9649a" };
 const FALLBACK = "ansi6";
 
+// A theme colour with alpha; an eight-digit or named colour is already opaque,
+// so it is left as it is instead of gaining a suffix that would invalidate it.
+const wash = (c, a = "14") => (/^#[0-9a-fA-F]{6}$/.test(c ?? "") ? c + a : c);
+
 function find(node, id) {
   if (node?.id === id) return node;
   for (const child of node?.children ?? []) {
@@ -148,8 +152,13 @@ export default class CommandBar extends View {
           // turn so its copy can answer the token on the next frame, instead of
           // waiting for its scan timer.
           if (c === "focus_sidebar") {
-            if (!shared("sidebar.kb")) setSidebarMode("wide");
-            setShared("sidebar.focus", Date.now());
+            // A panel that has never been shown starts on this press. Hand it
+            // the token after it has started, or the new copy records the token
+            // as its baseline and the first Alt+B only opens the column.
+            const wasHidden = !shared("sidebar.kb");
+            if (wasHidden) setSidebarMode("wide");
+            const ask = () => setShared("sidebar.focus", Date.now());
+            if (wasHidden) cx.timer.after(120, ask); else ask();
           }
           if (c === "dir_down" || c === "dir_up") walk(c === "dir_down" ? "down" : "up");
           else if (c === "close_pane" || c === "close_tab") closeFocused(c);
@@ -162,6 +171,16 @@ export default class CommandBar extends View {
               // One second leaves the panel's 200 ms timer room to ack first.
               cx.timer.after(1000, () => {
                 if (shared("agents.command.ack")?.n !== n) run("space.new");
+              });
+            } else {
+              // Same start-hidden case for the worktree and close keys: open the
+              // panel that owns them, then hand the command to the new copy.
+              // A running copy acks within its 200 ms tick, so this never fires
+              // in the normal hidden case.
+              cx.timer.after(1000, () => {
+                if (shared("agents.command.ack")?.n === n) return;
+                setSidebarMode("wide");
+                cx.timer.after(250, () => relay(c));
               });
             }
           }
@@ -258,7 +277,7 @@ export default class CommandBar extends View {
               .items_center()
               .justify_center()
               .border(1)
-              .border_color(t.foreground + "14")
+              .border_color(wash(t.foreground, "14"))
               .text_size(10.5)
               .font_bold()
               .text_color("#ffffff")
@@ -319,7 +338,7 @@ export default class CommandBar extends View {
                     .items_center()
                     .gap(6)
                     .rounded(6)
-                    .bg(t.blocked + "26")
+                    .bg(wash(t.blocked, "26"))
                     .text_size(10.5)
                     .font_semibold()
                     .text_color(t.blocked)
