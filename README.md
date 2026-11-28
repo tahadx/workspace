@@ -97,7 +97,10 @@ the command bar, so they keep working while it is hidden. Every binding is in
 ## Theme
 
 `themes/omarchy.json` is the palette it is drawn for; any theme works by
-pointing the layout's `theme` at a name in `themes/`.
+pointing the layout's `theme` at a name in `themes/`. Omarchy rewrites that file
+from your current theme on every theme switch, so a local diff after switching
+is expected: the committed copy is the default for users without the Omarchy
+integration, and everyone else's is generated on their own machine.
 
 ## More
 
