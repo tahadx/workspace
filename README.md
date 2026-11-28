@@ -101,8 +101,8 @@ pointing the layout's `theme` at a name in `themes/`.
 
 ## More
 
-`RECIPE.md` is the brief another agent can rebuild it from, and
-`layouts/workspace.json` is the window. The checks are
+`RECIPE.md` is the brief another agent can rebuild it from, `RULES.md` is the
+behaviour contract it must keep, and `layouts/workspace.json` is the window. The checks are
 `node tests/*.test.mjs` and `herdr-app check mods/<name>`. Listed at
 [herdr.dev/layouts/tahadx/workspace](https://herdr.dev/layouts/tahadx/workspace).
 MIT — see [LICENSE](LICENSE).
