@@ -11,7 +11,7 @@ import {
   onGitRefresh, takeGitAsk, touchWorkspace, listedCheckouts, pictureKey,
   beginPaint, endPaint, frameCache, spaceRecord, pinSpace, persistWorkspace, spaceRead, inside,
   checkoutRecordOf, groupKeyOf, worktreeSiblings, movePathWithin, machineIndexOf,
-  orderedPaths, orderedPlaces, ribbonPins, agentFolders, SEP,
+  orderedPaths, orderedPlaces, ribbonPins, agentFolders, dedupeSessions, SEP,
 } from "./workspace-engine.js";
 
 // Close a space once. A deleted folder and a removed checkout are noticed by
@@ -226,11 +226,23 @@ function leadPanes(all) {
   return leads;
 }
 
-function title(tab, l) {
+// "t1kn" is how Herdr points at a terminal, not a name: a program that has not
+// said what it is doing yet leaves its live title as the address, and a row
+// named after the address reads as a bug. Such a title says nothing.
+const isAddress = (s) => typeof s === "string" && /^[a-z]{1,3}\d[a-z0-9]{0,4}$/i.test(s);
+
+function title(tab, l, a) {
   const prog = l?.program?.name;
   const live = clean(l?.title);
-  const telling = live && live !== prog && !/^[~/]|^[A-Za-z]:\\/.test(live) && !live.includes("@") && live.toLowerCase() !== l?.program?.key;
-  return (tab.name === prog || !tab.named) && telling ? live : tab.name;
+  const own = clean(a?.title) || clean(a?.tab_name);
+  const telling = live && live !== prog && !isAddress(live) && live !== l?.terminal && !/^[~/]|^[A-Za-z]:\\/.test(live) && !live.includes("@") && live.toLowerCase() !== l?.program?.key;
+  // A tab someone named is their name for it and always wins.
+  if (tab.named && tab.name !== prog) return tab.name;
+  if (telling) return live;
+  // The agent's own report ("OC | Synthetic cursor first") names the row when
+  // the terminal has not said anything useful, before a bare program name.
+  if (own && !isAddress(own) && own !== a?.address) return own;
+  return tab.name;
 }
 // A sub-agent without a pane isn't in agents(): its raw word, error counting as
 // blocked. It's never done: it reports to its parent, and the parent's done is the news.
@@ -2193,6 +2205,9 @@ export class Sidebar extends Workspace {
     let list = agents().filter((a) => !this.removedNow?.has(a.space));
     this.listed = new Map(list.map((a) => [a.address, a.status]));
     const all = terminals();
+    // A session open in two terminals is one agent: two rows for it read as
+    // two agents, and the older view is the one that lies about where it is.
+    list = dedupeSessions(list, all);
     const treeMemo = new Map();
     const subsOf = (addr) => {
       let hit = treeMemo.get(addr);
@@ -2249,7 +2264,7 @@ export class Sidebar extends Workspace {
     const labels = new Map(list.map((a) => {
       const tab = tabs.get(a.tab);
       const many = tabCounts.get(a.tab) > 1;
-      return [a.address, tab ? title(many ? { ...tab, named: false } : tab, many ? a : leads.get(a.tab)) : (a.title || a.program?.name || "")];
+      return [a.address, tab ? title(many ? { ...tab, named: false } : tab, many ? a : leads.get(a.tab), a) : (clean(a.title) || a.program?.name || "")];
     }));
     const label = (a) => labels.get(a.address);
     const detail = new Map(list.map((a) => [a.address, /^\d+$/.test(label(a)) ? null : label(a)]));
@@ -2480,6 +2495,9 @@ export class Sidebar extends Workspace {
     let list = agents().filter((a) => !removed.has(a.space));
     this.listed = new Map(list.map((a) => [a.address, a.status]));
     const all = terminals();
+    // A session open in two terminals is one agent: two rows for it read as
+    // two agents, and the older view is the one that lies about where it is.
+    list = dedupeSessions(list, all);
     const treeMemo = new Map();
     const subsOf = (addr) => {
       let hit = treeMemo.get(addr);
@@ -2626,7 +2644,7 @@ export class Sidebar extends Workspace {
     const labels = new Map(list.map(a => {
       const tab = tabs.get(a.tab);
       const many = tabCounts.get(a.tab) > 1;
-      return [a.address, tab ? title(many ? { ...tab, named: false } : tab, many ? a : leads.get(a.tab)) : (a.title || a.program?.name || "")];
+      return [a.address, tab ? title(many ? { ...tab, named: false } : tab, many ? a : leads.get(a.tab), a) : (clean(a.title) || a.program?.name || "")];
     }));
     const label = (a) => labels.get(a.address);
     const detail = new Map(list.map(a => [a.address, /^\d+$/.test(label(a)) ? null : label(a)]));
@@ -2720,12 +2738,24 @@ export class Sidebar extends Workspace {
       const kidsOf = new Map();
       const checkoutKids = new Map();
       const folders = agentFolders();
+      // A checkout a space stands in is drawn as that space's own row, not as a
+      // checkout row: an agent that moved into it belongs under the worktree
+      // there. Sending it to `checkoutKids` hid it, because `checkoutsOf` only
+      // lists checkouts nobody opened — the agent vanished with the row it was
+      // waiting for.
+      const atCheckout = new Map();
+      for (const s of allSpaces) {
+        const root = this.checkoutRecord(s, paneList)?.root;
+        if (root) atCheckout.set(`${s.machine ?? ""}\u0000${tidyPath(root)}`, s.id);
+      }
       for (const a of list) {
         // An agent that moved its session into a checkout belongs under that
         // checkout row, not under the space it started in: the space stays put.
         const at = tidyPath(folders.get(a.address) ?? "");
         const c = at && trees.find((w) => !w.main && tidyPath(w.path) === at);
-        if (c) {
+        const holder = c ? atCheckout.get(`${c.on ?? ""}\u0000${tidyPath(c.path)}`) : null;
+        if (c && holder) kidsOf.set(holder, [...(kidsOf.get(holder) ?? []), a]);
+        else if (c) {
           const key = `ck-${c.on ?? ""}-${tidyPath(c.path)}`;
           checkoutKids.set(key, [...(checkoutKids.get(key) ?? []), a]);
         } else kidsOf.set(a.space, [...(kidsOf.get(a.space) ?? []), a]);

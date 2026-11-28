@@ -48,7 +48,7 @@ const check = (label, ok, extra = "") => {
   console.log(`${ok ? "ok  " : "FAIL"} ${label}${ok || !extra ? "" : ` — ${extra}`}`);
 };
 
-const search = new Function("spaces", "agents", "pinnedList", "openSpaceFor", "place", "norm", "base", "termsOf", "scoreTerms", "pinLabel",
+const search = new Function("spaces", "agents", "pinnedList", "openSpaceFor", "place", "norm", "base", "termsOf", "scoreTerms", "pinLabel", "dedupeSessions",
   `${method("search")}; return search;`);
 
 const norm = (p) => (p ?? "").replace(/\\/g, "/");
@@ -77,7 +77,7 @@ function rows(world, q) {
     pinChildren(_p) { return { spaces: world.pinSpaces ?? [], trees: world.pinTrees ?? [] }; },
   };
   return search(() => world.spaces ?? [], () => world.agents ?? [], () => world.pins ?? [],
-    () => null, (s) => s.folder, norm, base, termsOf, scoreTerms, (p) => p.name).call(self, q);
+    () => null, (s) => s.folder, norm, base, termsOf, scoreTerms, (p) => p.name, (list) => list).call(self, q);
 }
 
 const repo = { id: "r", name: "kleeamp", folder: "/repo", machine: null, status: "idle" };

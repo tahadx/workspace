@@ -10,7 +10,7 @@ import {
   tidyPath, spaceColor, worktreeTree, RANK, askGit, listedCheckouts, pictureKey,
   beginPaint, endPaint, frameCache, scoreTerms, termsOf, spaceRecord,
   groupKeyOf, orderedPaths, orderedPlaces, placeCount, placeGroup, groupPlaces, ribbonPins, movePathWithin, machineIndexOf, persistWorkspace,
-  touchWorkspace, agentFolders, SEP,
+  touchWorkspace, agentFolders, dedupeSessions, SEP,
 } from "./workspace-engine.js";
 
 // A checkout's row while git works on it, and after a failed attempt. The row
@@ -46,7 +46,10 @@ export class Palette extends Workspace {
     // What the sheet opened on. A space made between this line and the first
     // frame is still new to the person and closes the sheet; without it the
     // first render would take the new space for one that was already there.
-    this.seen = new Set(openedWith.map((s) => s.id));
+    // Empty at this point means the model had not loaded yet, not that every
+    // space is new: the first frame takes the list as its baseline, or the
+    // sheet closes itself the moment it opens.
+    this.seen = openedWith.length ? new Set(openedWith.map((s) => s.id)) : null;
     // The sidebar's "new space" signal: a timer, not a render, closes on it.
     this.closeAt = shared("search.close") ?? 0;
     this.overlay = _props?.overlay ?? null;
@@ -95,7 +98,8 @@ export class Palette extends Workspace {
       // or a terminal): the overlay's paint is not guaranteed, so compare the
       // live ids here rather than trusting the last frame to notice.
       const idsNow = spaces().map((s) => s.id);
-      if (idsNow.some((id) => !this.seen.has(id))) {
+      if (!this.seen) this.seen = new Set(idsNow);
+      else if (idsNow.some((id) => !this.seen.has(id))) {
         this.seen = new Set(idsNow);
         this.close();
         return;
@@ -174,7 +178,7 @@ export class Palette extends Workspace {
     const ps = this.paneSnap ?? (typeof panes === "function" ? frameCache("panes", panes) : undefined);
     const listed = this.liveSpaces(ps);
     const listedIds = new Set(listed.map((s) => s.id));
-    const listedAgents = typeof agents === "function" ? agents() : [];
+    const listedAgents = typeof agents === "function" ? dedupeSessions(agents()) : [];
     const pinned = pinnedList();
     const trees = this.liveTrees();
     for (const s of listed) {
@@ -382,7 +386,7 @@ export class Palette extends Workspace {
     // A pin is the place: a space standing where a pin's space used to be takes
     // that pin, so the row keeps its slot and the place stays pinned.
     this.bindPins(all);
-    const agentList = agents();
+    const agentList = dedupeSessions(agents());
     const keyOf = (w) => `${w.on ?? ""}\u0000${w.c.path}`;
     const kids = (id) => this.kidsOf(all, id);
     const ckids = (id) => this.checkoutsOf(all, id);
@@ -392,10 +396,20 @@ export class Palette extends Workspace {
     // row, not under the space it started in: the space keeps its own place.
     const folders = agentFolders();
     const agentCheckout = new Map();
+    // A checkout a space stands in is that space's row here too, so an agent
+    // that moved into it is drawn under the worktree, not under a checkout row
+    // nobody opens.
+    const atCheckout = new Map();
+    for (const s of all) {
+      const root = this.checkoutRecord(s, ps)?.root;
+      if (root) atCheckout.set(`${s.machine ?? ""}\u0000${tidyPath(root)}`, s.id);
+    }
     for (const a of agentList) {
       const at = tidyPath(folders.get(a.address) ?? "");
       const c = at && this.liveTrees().find((w) => !w.c.main && tidyPath(w.c.path) === at);
-      if (c) agentCheckout.set(a.address, keyOf(c));
+      if (!c) continue;
+      const holder = atCheckout.get(`${c.on ?? ""}\u0000${tidyPath(c.path)}`);
+      agentCheckout.set(a.address, holder ? `space\u0000${holder}` : keyOf(c));
     }
     const worktreeAgents = (w, depth) => {
       const key = keyOf(w);
@@ -415,8 +429,10 @@ export class Palette extends Workspace {
       seen.add(s.id);
       emitted.add(s.id);
       // What runs there, so the overview shows agents next to their worktrees.
+      // A session that moved into this place's checkout counts as there.
       for (const a of agentList) {
-        if (a.space === s.id && !agentCheckout.has(a.address)) out.push({ kind: "agent", a, depth: depth + 1 });
+        const home = agentCheckout.get(a.address);
+        if (home === `space\u0000${s.id}` || (!home && a.space === s.id)) out.push({ kind: "agent", a, depth: depth + 1 });
       }
       for (const k of kids(s.id)) if (!seen.has(k.id)) emit(k, depth + 1, seen);
       for (const w of ckids(s.id)) {

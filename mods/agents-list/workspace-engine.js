@@ -271,6 +271,39 @@ export function agentFolders() {
   return out;
 }
 
+// One session can be reported by two terminals: opencode resumes a session in a
+// new terminal and leaves the old view running, so the same agent was drawn
+// twice in the same place (and once in each place in the sheet). The report
+// names the session ids a terminal is attached to, so two rows sharing one are
+// one agent. Keep the focused row, else a pinned one, else the one that changed
+// last; a terminal that reports no session is never merged, so nothing is
+// hidden on a guess.
+export function dedupeSessions(list, all = frameCache("terminals", terminals)) {
+  if (list.length < 2) return list;
+  const byAddress = new Map(all.map((t) => [t.address, t]));
+  const sessionsOf = (a) => {
+    const records = byAddress.get(a.address)?.records;
+    return records ? Object.keys(records) : [];
+  };
+  const better = (a, b) => (a.focused !== b.focused ? a.focused
+    : a.pinned !== b.pinned ? a.pinned : (a.seq ?? 0) > (b.seq ?? 0));
+  const chosen = new Map();
+  const keys = new Map();
+  for (const a of list) {
+    const ks = sessionsOf(a);
+    keys.set(a.address, ks);
+    for (const k of ks) {
+      const current = chosen.get(k);
+      if (!current || better(a, current)) chosen.set(k, a);
+    }
+  }
+  const dropped = new Set();
+  for (const a of list) {
+    if ((keys.get(a.address) ?? []).some((k) => chosen.get(k) !== a)) dropped.add(a.address);
+  }
+  return dropped.size ? list.filter((a) => !dropped.has(a.address)) : list;
+}
+
 // A shell that has cd'd into a checkout stands there even when its agent's
 // session folder still names the repo it started in. Letting the session folder
 // win in that case is how a worktree got drawn as an ordinary space, once under
